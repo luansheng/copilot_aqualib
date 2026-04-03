@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 from typing import Any
 
 from aqualib.config import Settings
@@ -33,7 +32,8 @@ class RAGIndexer:
 
     async def build_index(self) -> None:
         """(Re-)build the in-memory vector index."""
-        from llama_index.core import Document, Settings as LISettings, VectorStoreIndex
+        from llama_index.core import Document, VectorStoreIndex
+        from llama_index.core import Settings as LISettings
         from llama_index.embeddings.openai import OpenAIEmbedding
         from llama_index.llms.openai import OpenAI
 

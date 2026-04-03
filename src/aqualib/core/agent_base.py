@@ -5,7 +5,7 @@ from __future__ import annotations
 import abc
 from typing import TYPE_CHECKING
 
-from aqualib.core.message import Message, Role, Task
+from aqualib.core.message import Role, Task
 
 if TYPE_CHECKING:
     from aqualib.config import Settings
