@@ -1,4 +1,4 @@
-"""Unit tests for the Markdown-driven Clawbio skill loader."""
+"""Unit tests for the Markdown-driven vendor skill loader."""
 
 import json
 import textwrap
@@ -9,10 +9,10 @@ import pytest
 
 from aqualib.core.message import SkillSource
 from aqualib.skills.loader import (
-    ClawBioCliSkill,
-    mount_clawbio_skills,
+    VendorCliSkill,
+    mount_vendor_skills,
     parse_skill_md,
-    scan_clawbio_directory,
+    scan_vendor_directory,
 )
 from aqualib.skills.registry import SkillRegistry
 
@@ -31,9 +31,9 @@ def _write_skill_md(directory: Path, content: str) -> Path:
 
 
 @pytest.fixture()
-def clawbio_dir(tmp_path: Path) -> Path:
-    """Create a temporary Clawbio mount point with a sample SKILL.md."""
-    d = tmp_path / "skills" / "clawbio"
+def vendor_dir(tmp_path: Path) -> Path:
+    """Create a temporary vendor mount point with a sample SKILL.md."""
+    d = tmp_path / "skills" / "vendor"
     _write_skill_md(
         d / "alignment",
         """\
@@ -45,7 +45,7 @@ def clawbio_dir(tmp_path: Path) -> Path:
         ---
         # Sequence Alignment
 
-        Runs a CLI-based alignment pipeline via clawbio.py.
+        Runs a CLI-based alignment pipeline via the vendor entry point.
         """,
     )
     # Also place a dummy clawbio.py entry point
@@ -107,34 +107,34 @@ def test_parse_parameters_json():
 
 
 # ---------------------------------------------------------------------------
-# scan_clawbio_directory
+# scan_vendor_directory
 # ---------------------------------------------------------------------------
 
 
 def test_scan_empty_directory(tmp_path: Path):
     empty = tmp_path / "empty"
     empty.mkdir()
-    skills = scan_clawbio_directory(empty)
+    skills = scan_vendor_directory(empty)
     assert skills == []
 
 
 def test_scan_nonexistent_directory(tmp_path: Path):
-    skills = scan_clawbio_directory(tmp_path / "nope")
+    skills = scan_vendor_directory(tmp_path / "nope")
     assert skills == []
 
 
-def test_scan_discovers_skill(clawbio_dir: Path):
-    skills = scan_clawbio_directory(clawbio_dir)
+def test_scan_discovers_skill(vendor_dir: Path):
+    skills = scan_vendor_directory(vendor_dir)
     assert len(skills) == 1
     assert skills[0].meta.name == "sequence_alignment"
-    assert skills[0].meta.source == SkillSource.CLAWBIO
+    assert skills[0].meta.source == SkillSource.VENDOR
 
 
 def test_scan_multiple_skills(tmp_path: Path):
-    d = tmp_path / "skills" / "clawbio"
+    d = tmp_path / "skills" / "vendor"
     _write_skill_md(d / "skill_a", "---\nname: skill_a\ndescription: A\n---\n")
     _write_skill_md(d / "skill_b", "---\nname: skill_b\ndescription: B\n---\n")
-    skills = scan_clawbio_directory(d)
+    skills = scan_vendor_directory(d)
     assert len(skills) == 2
     names = {s.meta.name for s in skills}
     assert names == {"skill_a", "skill_b"}
@@ -142,56 +142,56 @@ def test_scan_multiple_skills(tmp_path: Path):
 
 def test_scan_nested_skill(tmp_path: Path):
     """SKILL.md in a sub-directory should be discovered."""
-    d = tmp_path / "skills" / "clawbio"
+    d = tmp_path / "skills" / "vendor"
     _write_skill_md(d / "nested" / "deep", "---\nname: deep_skill\ndescription: deep\n---\n")
-    skills = scan_clawbio_directory(d)
+    skills = scan_vendor_directory(d)
     assert len(skills) == 1
     assert skills[0].meta.name == "deep_skill"
 
 
 def test_scan_skips_invalid_md(tmp_path: Path):
     """A SKILL.md with no name should be skipped gracefully."""
-    d = tmp_path / "skills" / "clawbio" / "bad"
+    d = tmp_path / "skills" / "vendor" / "bad"
     d.mkdir(parents=True)
     (d / "SKILL.md").write_text("No frontmatter, no heading, just text.")
-    skills = scan_clawbio_directory(d.parent.parent)
+    skills = scan_vendor_directory(d.parent.parent)
     assert skills == []
 
 
 # ---------------------------------------------------------------------------
-# mount_clawbio_skills
+# mount_vendor_skills
 # ---------------------------------------------------------------------------
 
 
-def test_mount_registers_skills(clawbio_dir: Path):
-    registry = SkillRegistry(clawbio_priority=True)
-    count = mount_clawbio_skills(clawbio_dir, registry)
+def test_mount_registers_skills(vendor_dir: Path):
+    registry = SkillRegistry(vendor_priority=True)
+    count = mount_vendor_skills(vendor_dir, registry)
     assert count == 1
     skill = registry.get("sequence_alignment")
     assert skill is not None
-    assert skill.meta.source == SkillSource.CLAWBIO
+    assert skill.meta.source == SkillSource.VENDOR
 
 
-def test_mount_forces_clawbio_source(tmp_path: Path):
-    """Even if SKILL.md doesn't declare source, mount sets it to CLAWBIO."""
-    d = tmp_path / "skills" / "clawbio"
+def test_mount_forces_vendor_source(tmp_path: Path):
+    """Even if SKILL.md doesn't declare source, mount sets it to VENDOR."""
+    d = tmp_path / "skills" / "vendor"
     _write_skill_md(d / "s1", "---\nname: some_tool\ndescription: test\n---\n")
-    registry = SkillRegistry(clawbio_priority=True)
-    mount_clawbio_skills(d, registry)
+    registry = SkillRegistry(vendor_priority=True)
+    mount_vendor_skills(d, registry)
     skill = registry.get("some_tool")
     assert skill is not None
-    assert skill.meta.source == SkillSource.CLAWBIO
+    assert skill.meta.source == SkillSource.VENDOR
 
 
 # ---------------------------------------------------------------------------
-# ClawBioCliSkill adapter
+# VendorCliSkill adapter
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_cli_skill_writes_input_and_calls_subprocess(clawbio_dir: Path, tmp_path: Path):
+async def test_cli_skill_writes_input_and_calls_subprocess(vendor_dir: Path, tmp_path: Path):
     """Verify the adapter writes input params and calls the CLI."""
-    skills = scan_clawbio_directory(clawbio_dir)
+    skills = scan_vendor_directory(vendor_dir)
     assert len(skills) == 1
     skill = skills[0]
 
@@ -222,9 +222,9 @@ async def test_cli_skill_writes_input_and_calls_subprocess(clawbio_dir: Path, tm
 
 
 @pytest.mark.asyncio
-async def test_cli_skill_raises_on_nonzero_exit(clawbio_dir: Path, tmp_path: Path):
+async def test_cli_skill_raises_on_nonzero_exit(vendor_dir: Path, tmp_path: Path):
     """Verify the adapter raises RuntimeError when CLI exits with non-zero code."""
-    skills = scan_clawbio_directory(clawbio_dir)
+    skills = scan_vendor_directory(vendor_dir)
     skill = skills[0]
     out_dir = tmp_path / "output"
 
@@ -233,14 +233,14 @@ async def test_cli_skill_raises_on_nonzero_exit(clawbio_dir: Path, tmp_path: Pat
     mock_process.communicate = AsyncMock(return_value=(b"", b"Error: something failed"))
 
     with patch("aqualib.skills.loader.asyncio.create_subprocess_exec", return_value=mock_process):
-        with pytest.raises(RuntimeError, match="Clawbio CLI exited with code 1"):
+        with pytest.raises(RuntimeError, match="Vendor CLI exited with code 1"):
             await skill.execute({}, out_dir)
 
 
 @pytest.mark.asyncio
-async def test_cli_skill_reads_json_output(clawbio_dir: Path, tmp_path: Path):
+async def test_cli_skill_reads_json_output(vendor_dir: Path, tmp_path: Path):
     """When the CLI writes a JSON output file, the adapter should parse it."""
-    skills = scan_clawbio_directory(clawbio_dir)
+    skills = scan_vendor_directory(vendor_dir)
     skill = skills[0]
     out_dir = tmp_path / "output"
     out_dir.mkdir(parents=True)
@@ -253,7 +253,7 @@ async def test_cli_skill_reads_json_output(clawbio_dir: Path, tmp_path: Path):
 
     async def _fake_exec(*args, **kwargs):
         # Simulate the CLI writing the output file
-        output_file = out_dir / "clawbio_output.json"
+        output_file = out_dir / "vendor_output.json"
         output_file.write_text(json.dumps(expected_output))
         return mock_process
 
@@ -266,15 +266,15 @@ async def test_cli_skill_reads_json_output(clawbio_dir: Path, tmp_path: Path):
 
 def test_cli_skill_entry_point_resolution(tmp_path: Path):
     """Verify entry point resolution prefers clawbio.py."""
-    d = tmp_path / "clawbio"
+    d = tmp_path / "vendor_lib"
     d.mkdir()
     (d / "clawbio.py").write_text("# entry")
 
     from aqualib.skills.skill_base import SkillMeta
 
-    skill = ClawBioCliSkill(
-        skill_meta=SkillMeta(name="test", description="test", source=SkillSource.CLAWBIO),
+    skill = VendorCliSkill(
+        skill_meta=SkillMeta(name="test", description="test", source=SkillSource.VENDOR),
         skill_dir=d,
-        clawbio_root=d,
+        vendor_root=d,
     )
     assert skill._resolve_entry_point() == d / "clawbio.py"

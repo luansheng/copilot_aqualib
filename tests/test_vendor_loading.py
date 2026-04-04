@@ -4,7 +4,7 @@ import textwrap
 from pathlib import Path
 
 from aqualib.skills.clawbio.skills import ALL_CLAWBIO_SKILLS
-from aqualib.skills.loader import mount_clawbio_skills
+from aqualib.skills.loader import mount_vendor_skills
 from aqualib.skills.registry import SkillRegistry
 
 # ---------------------------------------------------------------------------
@@ -69,18 +69,18 @@ def test_vendor_skills_are_registered_when_dir_exists(tmp_path: Path):
     vendor = tmp_path / "vendor" / "ClawBio"
     _write_skill_md(vendor / "pharmgx", "pharmgx_reporter", "PharmGx reporter skill")
 
-    registry = SkillRegistry(clawbio_priority=True)
-    count = mount_clawbio_skills(vendor, registry)
+    registry = SkillRegistry(vendor_priority=True)
+    count = mount_vendor_skills(vendor, registry)
 
     assert count == 1
     assert registry.get("pharmgx_reporter") is not None
 
 
 def test_vendor_scan_returns_zero_when_dir_missing(tmp_path: Path):
-    """mount_clawbio_skills should return 0 when directory doesn't exist."""
+    """mount_vendor_skills should return 0 when directory doesn't exist."""
     missing = tmp_path / "vendor" / "ClawBio"
-    registry = SkillRegistry(clawbio_priority=True)
-    count = mount_clawbio_skills(missing, registry)
+    registry = SkillRegistry(vendor_priority=True)
+    count = mount_vendor_skills(missing, registry)
     assert count == 0
 
 
@@ -91,8 +91,8 @@ def test_vendor_multiple_skills(tmp_path: Path):
     _write_skill_md(vendor / "skill_b", "vendor_skill_b")
     _write_skill_md(vendor / "nested" / "skill_c", "vendor_skill_c")
 
-    registry = SkillRegistry(clawbio_priority=True)
-    count = mount_clawbio_skills(vendor, registry)
+    registry = SkillRegistry(vendor_priority=True)
+    count = mount_vendor_skills(vendor, registry)
 
     assert count == 3
     assert registry.get("vendor_skill_a") is not None
@@ -107,7 +107,7 @@ def test_vendor_multiple_skills(tmp_path: Path):
 
 def test_runtime_mount_takes_priority_over_vendor(tmp_path: Path):
     """A skill registered from runtime mount point should not be overwritten by vendor."""
-    from aqualib.skills.loader import scan_clawbio_directory
+    from aqualib.skills.loader import scan_vendor_directory
 
     # Runtime mount: registers "my_skill" with description "runtime version"
     runtime = tmp_path / "runtime"
@@ -117,13 +117,13 @@ def test_runtime_mount_takes_priority_over_vendor(tmp_path: Path):
     vendor = tmp_path / "vendor"
     _write_skill_md(vendor / "s", "my_skill", "vendor version")
 
-    registry = SkillRegistry(clawbio_priority=True)
+    registry = SkillRegistry(vendor_priority=True)
 
     # 1. Mount runtime (highest priority) — always registers
-    mount_clawbio_skills(runtime, registry)
+    mount_vendor_skills(runtime, registry)
 
     # 2. Mount vendor — should NOT overwrite runtime registration (uses get() check)
-    for skill in scan_clawbio_directory(vendor):
+    for skill in scan_vendor_directory(vendor):
         if registry.get(skill.meta.name) is None:
             registry.register(skill)
 
@@ -139,10 +139,10 @@ def test_vendor_takes_priority_over_placeholder(tmp_path: Path):
     placeholder_name = ALL_CLAWBIO_SKILLS[0]().meta.name
     _write_skill_md(vendor / "override", placeholder_name, "vendor override")
 
-    registry = SkillRegistry(clawbio_priority=True)
+    registry = SkillRegistry(vendor_priority=True)
 
     # 1. Mount vendor (tier 2)
-    mount_clawbio_skills(vendor, registry)
+    mount_vendor_skills(vendor, registry)
 
     # 2. Register placeholder skills (tier 3) — should not overwrite vendor
     for cls in ALL_CLAWBIO_SKILLS:
@@ -157,7 +157,7 @@ def test_vendor_takes_priority_over_placeholder(tmp_path: Path):
 
 def test_placeholder_registered_when_no_runtime_or_vendor_skill(tmp_path: Path):
     """Placeholder skills should be registered when no higher-priority skill exists."""
-    registry = SkillRegistry(clawbio_priority=True)
+    registry = SkillRegistry(vendor_priority=True)
 
     # No runtime, no vendor — only placeholders
     for cls in ALL_CLAWBIO_SKILLS:
@@ -175,15 +175,15 @@ def test_placeholder_registered_when_no_runtime_or_vendor_skill(tmp_path: Path):
 
 def test_build_registry_scans_vendor_if_exists(tmp_path: Path):
     """build_registry should register vendor skills when the vendor directory exists."""
-    from aqualib.skills.loader import scan_clawbio_directory
+    from aqualib.skills.loader import scan_vendor_directory
 
     vendor = tmp_path / "vendor" / "ClawBio"
     _write_skill_md(vendor / "bio_tool", "bio_tool_skill", "A vendor skill")
 
-    # Directly verify the vendor scan logic: scan_clawbio_directory + get() check
+    # Directly verify the vendor scan logic: scan_vendor_directory + get() check
     # mirrors what bootstrap.py does for tier 2
-    registry = SkillRegistry(clawbio_priority=True)
-    for skill in scan_clawbio_directory(vendor):
+    registry = SkillRegistry(vendor_priority=True)
+    for skill in scan_vendor_directory(vendor):
         if registry.get(skill.meta.name) is None:
             registry.register(skill)
 
@@ -197,7 +197,7 @@ def test_build_registry_skips_vendor_if_missing(tmp_path: Path):
 
     settings = Settings(
         directories=DirectorySettings(base=str(tmp_path / "ws")).resolve(),
-        clawbio_priority=True,
+        vendor_priority=True,
     )
 
     # Run build_registry normally — if vendor doesn't exist, placeholders should still load

@@ -1,22 +1,22 @@
-"""Markdown-driven skill loader for the Clawbio CLI library.
+"""Markdown-driven skill loader for vendor CLI libraries.
 
-ClawBio is a **CLI-first, Markdown-driven** skill library.  The source of
-truth for each skill is its ``SKILL.md`` file – *not* a Python module.
-Skills are executed via the Clawbio CLI entry point::
+Vendor libraries are **CLI-first, Markdown-driven** skill collections.  The
+source of truth for each skill is its ``SKILL.md`` file – *not* a Python
+module.  Skills are executed via the library's CLI entry point::
 
-    python clawbio.py run <input_file> --output <output_file> --skill <name>
+    python <entry_point> run <input_file> --output <output_file> --skill <name>
 
 This loader:
 
-1. Recursively scans the Clawbio mount point for ``SKILL.md`` files.
+1. Recursively scans a vendor mount point for ``SKILL.md`` files.
 2. Parses each ``SKILL.md`` to extract structured metadata (name,
    description, tags, parameters schema).
-3. Creates a thin :class:`ClawBioCliSkill` adapter that implements the
+3. Creates a thin :class:`VendorCliSkill` adapter that implements the
    standard :class:`BaseSkill` interface by delegating execution to the
-   Clawbio CLI via ``asyncio.create_subprocess_exec``.
+   vendor CLI via ``asyncio.create_subprocess_exec``.
 
-The framework never imports or modifies Clawbio internals – it treats the
-library as a *black box* discovered purely through its Markdown contracts.
+The framework never imports or modifies vendor library internals – it treats
+each library as a *black box* discovered purely through its Markdown contracts.
 """
 
 from __future__ import annotations
@@ -106,22 +106,22 @@ def parse_skill_md(text: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-class ClawBioCliSkill(BaseSkill):
-    """Adapter that wraps a single Clawbio skill discovered via ``SKILL.md``.
+class VendorCliSkill(BaseSkill):
+    """Adapter that wraps a single vendor skill discovered via ``SKILL.md``.
 
-    Execution delegates to the Clawbio CLI entry point via subprocess::
+    Execution delegates to the vendor CLI entry point via subprocess::
 
-        python <clawbio_entry> run <input_file> --output <output_file> \\
+        python <vendor_entry> run <input_file> --output <output_file> \\
             --skill <skill_name>
     """
 
-    def __init__(self, skill_meta: SkillMeta, skill_dir: Path, clawbio_root: Path) -> None:
+    def __init__(self, skill_meta: SkillMeta, skill_dir: Path, vendor_root: Path) -> None:
         self.meta = skill_meta
         self._skill_dir = skill_dir
-        self._clawbio_root = clawbio_root
+        self._vendor_root = vendor_root
 
     async def execute(self, params: dict[str, Any], output_dir: Path) -> Any:
-        """Run the skill via the Clawbio CLI, writing artefacts to *output_dir*."""
+        """Run the skill via the vendor CLI, writing artefacts to *output_dir*."""
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # Resolve the CLI entry point
@@ -131,7 +131,7 @@ class ClawBioCliSkill(BaseSkill):
         input_file = output_dir / "input_params.json"
         input_file.write_text(json.dumps(params, indent=2))
 
-        output_file = output_dir / "clawbio_output.json"
+        output_file = output_dir / "vendor_output.json"
 
         cmd = [
             "python",
@@ -144,13 +144,13 @@ class ClawBioCliSkill(BaseSkill):
             self.meta.name,
         ]
 
-        logger.info("Clawbio CLI invocation: %s", " ".join(cmd))
+        logger.info("Vendor CLI invocation: %s", " ".join(cmd))
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=str(self._clawbio_root),
+            cwd=str(self._vendor_root),
         )
         stdout, stderr = await proc.communicate()
 
@@ -167,7 +167,7 @@ class ClawBioCliSkill(BaseSkill):
 
         if proc.returncode != 0:
             raise RuntimeError(
-                f"Clawbio CLI exited with code {proc.returncode}: {result['stderr'][:500]}"
+                f"Vendor CLI exited with code {proc.returncode}: {result['stderr'][:500]}"
             )
 
         # Try to read structured output
@@ -185,18 +185,18 @@ class ClawBioCliSkill(BaseSkill):
     # ------------------------------------------------------------------
 
     def _resolve_entry_point(self) -> Path:
-        """Locate the Clawbio CLI entry point (``clawbio.py``) in the library root."""
+        """Locate the vendor CLI entry point in the library root."""
         candidates = [
-            self._clawbio_root / "clawbio.py",
-            self._clawbio_root / "cli.py",
-            self._clawbio_root / "main.py",
+            self._vendor_root / "clawbio.py",
+            self._vendor_root / "cli.py",
+            self._vendor_root / "main.py",
         ]
         for c in candidates:
             if c.is_file():
                 return c
-        # Fallback: use root/clawbio.py even if not yet present (will
+        # Fallback: use root/cli.py even if not yet present (will
         # produce a clear subprocess error at runtime).
-        return self._clawbio_root / "clawbio.py"
+        return self._vendor_root / "cli.py"
 
 
 # ---------------------------------------------------------------------------
@@ -204,17 +204,17 @@ class ClawBioCliSkill(BaseSkill):
 # ---------------------------------------------------------------------------
 
 
-def scan_clawbio_directory(directory: Path) -> list[BaseSkill]:
+def scan_vendor_directory(directory: Path) -> list[BaseSkill]:
     """Walk *directory* for ``SKILL.md`` files and return adapter instances.
 
     If the directory does not exist or contains no ``SKILL.md`` files, an
     empty list is returned – the framework degrades gracefully.
     """
     if not directory.exists():
-        logger.info("Clawbio mount point %s does not exist – skipping scan.", directory)
+        logger.info("Vendor mount point %s does not exist – skipping scan.", directory)
         return []
     if not directory.is_dir():
-        logger.warning("Clawbio mount point %s exists but is not a directory – skipping scan.", directory)
+        logger.warning("Vendor mount point %s exists but is not a directory – skipping scan.", directory)
         return []
 
     skill_files = sorted(directory.rglob("SKILL.md"))
@@ -226,21 +226,21 @@ def scan_clawbio_directory(directory: Path) -> list[BaseSkill]:
     skills: list[BaseSkill] = []
     for md_file in skill_files:
         try:
-            skill = _load_skill_from_md(md_file, clawbio_root=directory)
+            skill = _load_skill_from_md(md_file, vendor_root=directory)
             if skill is not None:
                 skills.append(skill)
         except Exception:
             logger.exception("Failed to load skill from %s", md_file)
 
     logger.info(
-        "Clawbio scan complete: %d skill(s) discovered in %s",
+        "Vendor scan complete: %d skill(s) discovered in %s",
         len(skills),
         directory,
     )
     return skills
 
 
-def mount_clawbio_skills(
+def mount_vendor_skills(
     directory: Path,
     registry: "SkillRegistry",
 ) -> int:
@@ -248,9 +248,9 @@ def mount_clawbio_skills(
 
     Returns the number of skills registered.
     """
-    skills = scan_clawbio_directory(directory)
+    skills = scan_vendor_directory(directory)
     for skill in skills:
-        skill.meta.source = SkillSource.CLAWBIO
+        skill.meta.source = SkillSource.VENDOR
         registry.register(skill)
     return len(skills)
 
@@ -260,8 +260,8 @@ def mount_clawbio_skills(
 # ---------------------------------------------------------------------------
 
 
-def _load_skill_from_md(md_file: Path, *, clawbio_root: Path) -> BaseSkill | None:
-    """Parse a single ``SKILL.md`` and return a :class:`ClawBioCliSkill`.
+def _load_skill_from_md(md_file: Path, *, vendor_root: Path) -> BaseSkill | None:
+    """Parse a single ``SKILL.md`` and return a :class:`VendorCliSkill`.
 
     The skill name extracted from the Markdown is sanitised for use as a
     registry key: whitespace is replaced with underscores and the result is
@@ -290,16 +290,26 @@ def _load_skill_from_md(md_file: Path, *, clawbio_root: Path) -> BaseSkill | Non
     skill_meta = SkillMeta(
         name=name,
         description=description,
-        source=SkillSource.CLAWBIO,
+        source=SkillSource.VENDOR,
         tags=tags,
         version=version,
         parameters_schema=parameters,
     )
 
-    skill = ClawBioCliSkill(
+    skill = VendorCliSkill(
         skill_meta=skill_meta,
         skill_dir=md_file.parent,
-        clawbio_root=clawbio_root,
+        vendor_root=vendor_root,
     )
-    logger.debug("Loaded Clawbio skill '%s' from %s", name, md_file)
+    logger.debug("Loaded vendor skill '%s' from %s", name, md_file)
     return skill
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible aliases
+# ---------------------------------------------------------------------------
+
+# Keep old names available so existing external code won't break immediately.
+ClawBioCliSkill = VendorCliSkill
+scan_clawbio_directory = scan_vendor_directory
+mount_clawbio_skills = mount_vendor_skills

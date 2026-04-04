@@ -27,7 +27,7 @@ def test_task_add_message():
 
 
 def test_skill_invocation_defaults():
-    inv = SkillInvocation(skill_name="test_skill", source=SkillSource.CLAWBIO)
+    inv = SkillInvocation(skill_name="test_skill", source=SkillSource.VENDOR)
     assert inv.success is False
     assert inv.error is None
     assert len(inv.invocation_id) == 12
@@ -40,11 +40,11 @@ def test_audit_report_to_markdown():
         status=TaskStatus.APPROVED,
         executor_summary="All good",
         reviewer_verdict="Approved",
-        clawbio_priority_check="Satisfied",
+        vendor_priority_check="Satisfied",
         skill_invocations=[
             SkillInvocation(
                 skill_name="clawbio_align",
-                source=SkillSource.CLAWBIO,
+                source=SkillSource.VENDOR,
                 success=True,
                 output_dir="abc123/skills/inv1",
             ),

@@ -34,7 +34,7 @@ class TaskStatus(str, Enum):
 
 class SkillSource(str, Enum):
     """Where a skill originates – used by the reviewer to enforce priority."""
-    CLAWBIO = "clawbio"
+    VENDOR = "vendor"
     GENERIC = "generic"
     EXTERNAL = "external"
 
@@ -90,7 +90,7 @@ class Task(BaseModel):
     # Reviewer notes
     review_passed: Optional[bool] = None
     review_notes: str = ""
-    clawbio_priority_satisfied: Optional[bool] = None
+    vendor_priority_satisfied: Optional[bool] = None
 
     def add_message(self, role: Role, content: str, **meta: Any) -> Message:
         msg = Message(role=role, content=content, metadata=meta)
@@ -116,12 +116,15 @@ class AuditReport(BaseModel):
     executor_summary: str = ""
     reviewer_verdict: str = ""
     clawbio_priority_check: str = ""
+    vendor_priority_check: str = ""
     skill_invocations: list[SkillInvocation] = Field(default_factory=list)
     messages: list[Message] = Field(default_factory=list)
     generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_markdown(self) -> str:
         """Render the audit report as human-readable Markdown."""
+        # Use vendor_priority_check if set, fall back to clawbio_priority_check for compat
+        priority_check = self.vendor_priority_check or self.clawbio_priority_check
         lines = [
             f"# Audit Report – Task `{self.task_id}`",
             f"**Generated:** {self.generated_at.isoformat()}",
@@ -136,8 +139,8 @@ class AuditReport(BaseModel):
             "## Reviewer Verdict",
             self.reviewer_verdict or "_Pending review._",
             "",
-            "## Clawbio Priority Check",
-            self.clawbio_priority_check or "_Not evaluated._",
+            "## Vendor Priority Check",
+            priority_check or "_Not evaluated._",
             "",
             "## Skill Invocations",
         ]

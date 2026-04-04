@@ -18,8 +18,8 @@ class _DummyGenericSkill(BaseSkill):
         return {"ok": True}
 
 
-def _make_registry(*, clawbio_priority: bool = True) -> SkillRegistry:
-    reg = SkillRegistry(clawbio_priority=clawbio_priority)
+def _make_registry(*, vendor_priority: bool = True) -> SkillRegistry:
+    reg = SkillRegistry(vendor_priority=vendor_priority)
     for cls in ALL_CLAWBIO_SKILLS:
         reg.register(cls())
     reg.register(_DummyGenericSkill())
@@ -29,7 +29,7 @@ def _make_registry(*, clawbio_priority: bool = True) -> SkillRegistry:
 def test_register_and_list():
     reg = _make_registry()
     assert len(reg.list_all()) == len(ALL_CLAWBIO_SKILLS) + 1
-    assert len(reg.list_clawbio()) == len(ALL_CLAWBIO_SKILLS)
+    assert len(reg.list_vendor()) == len(ALL_CLAWBIO_SKILLS)
     assert len(reg.list_generic()) == 1
 
 
@@ -37,22 +37,22 @@ def test_get_by_name():
     reg = _make_registry()
     s = reg.get("clawbio_sequence_alignment")
     assert s is not None
-    assert s.meta.source == SkillSource.CLAWBIO
+    assert s.meta.source == SkillSource.VENDOR
 
 
-def test_resolve_clawbio_first():
-    reg = _make_registry(clawbio_priority=True)
+def test_resolve_vendor_first():
+    reg = _make_registry(vendor_priority=True)
     candidates = reg.resolve("alignment")
-    # Clawbio alignment skill should come before the generic one
-    clawbio_idx = next(
-        i for i, s in enumerate(candidates) if s.meta.source == SkillSource.CLAWBIO and "alignment" in s.meta.name
+    # Vendor alignment skill should come before the generic one
+    vendor_idx = next(
+        i for i, s in enumerate(candidates) if s.meta.source == SkillSource.VENDOR and "alignment" in s.meta.name
     )
     generic_idx = next(i for i, s in enumerate(candidates) if s.meta.source == SkillSource.GENERIC)
-    assert clawbio_idx < generic_idx
+    assert vendor_idx < generic_idx
 
 
 def test_resolve_without_priority():
-    reg = _make_registry(clawbio_priority=False)
+    reg = _make_registry(vendor_priority=False)
     candidates = reg.resolve("alignment")
     # Without priority, all are in the same bucket – just ensure we get results
     assert len(candidates) == len(ALL_CLAWBIO_SKILLS) + 1

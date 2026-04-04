@@ -21,8 +21,8 @@ def test_dirs_created(workspace: WorkspaceManager):
     assert workspace.dirs.work.exists()
     assert workspace.dirs.results.exists()
     assert workspace.dirs.data.exists()
-    assert workspace.dirs.skills_clawbio.exists()
-    assert workspace.dirs.clawbio_traces.exists()
+    assert workspace.dirs.skills_vendor.exists()
+    assert workspace.dirs.vendor_traces.exists()
 
 
 def test_save_and_load_task(workspace: WorkspaceManager):
@@ -50,7 +50,7 @@ def test_save_audit_report(workspace: WorkspaceManager):
         executor_summary="ok",
         reviewer_verdict="approved",
         skill_invocations=[
-            SkillInvocation(skill_name="s1", source=SkillSource.CLAWBIO, success=True),
+            SkillInvocation(skill_name="s1", source=SkillSource.VENDOR, success=True),
         ],
     )
     td = workspace.save_audit_report(report)
@@ -77,30 +77,28 @@ def test_skill_invocation_dir(workspace: WorkspaceManager):
     assert "result.json" in outputs[0]["files"]
 
 
-def test_save_clawbio_trace(workspace: WorkspaceManager):
-    from aqualib.core.message import SkillInvocation, SkillSource
-
+def test_save_vendor_trace(workspace: WorkspaceManager):
     inv = SkillInvocation(
-        skill_name="clawbio_test_skill",
-        source=SkillSource.CLAWBIO,
+        skill_name="vendor_test_skill",
+        source=SkillSource.VENDOR,
         parameters={"seq": "ATCG"},
         output={"score": 0.95},
         success=True,
     )
-    trace_path = workspace.save_clawbio_trace("task42", inv)
+    trace_path = workspace.save_vendor_trace("task42", inv)
     assert trace_path.exists()
-    assert trace_path.parent == workspace.dirs.clawbio_traces
+    assert trace_path.parent == workspace.dirs.vendor_traces
 
     data = json.loads(trace_path.read_text())
     assert data["task_id"] == "task42"
-    assert data["skill_name"] == "clawbio_test_skill"
+    assert data["skill_name"] == "vendor_test_skill"
     assert data["success"] is True
 
-    # list_clawbio_traces
-    traces = workspace.list_clawbio_traces("task42")
+    # list_vendor_traces
+    traces = workspace.list_vendor_traces("task42")
     assert len(traces) == 1
-    assert traces[0]["skill_name"] == "clawbio_test_skill"
+    assert traces[0]["skill_name"] == "vendor_test_skill"
 
     # listing without filter returns all
-    all_traces = workspace.list_clawbio_traces()
+    all_traces = workspace.list_vendor_traces()
     assert len(all_traces) == 1

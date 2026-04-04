@@ -6,9 +6,9 @@ Creates and maintains the canonical directory layout:
     ├── work/                   # scratch / intermediate files
     ├── data/                   # input data & RAG corpus
     ├── skills/
-    │   └── clawbio/            # mount point for external Clawbio library
+    │   └── vendor/             # mount point for external vendor libraries
     └── results/
-        ├── clawbio_traces/     # standardised logs of every Clawbio invocation
+        ├── vendor_traces/      # standardised logs of every vendor skill invocation
         └── <task_id>/
             ├── audit_report.json
             ├── audit_report.md
@@ -47,8 +47,8 @@ class WorkspaceManager:
             self.dirs.work,
             self.dirs.results,
             self.dirs.data,
-            self.dirs.skills_clawbio,
-            self.dirs.clawbio_traces,
+            self.dirs.skills_vendor,
+            self.dirs.vendor_traces,
         ):
             d.mkdir(parents=True, exist_ok=True)
         logger.info("Workspace ready at %s", self.dirs.base)
@@ -69,17 +69,17 @@ class WorkspaceManager:
         return p
 
     # ------------------------------------------------------------------
-    # Clawbio trace logging
+    # Vendor trace logging
     # ------------------------------------------------------------------
 
-    def save_clawbio_trace(self, task_id: str, invocation: SkillInvocation) -> Path:
-        """Write a standardised trace record for a Clawbio skill invocation.
+    def save_vendor_trace(self, task_id: str, invocation: SkillInvocation) -> Path:
+        """Write a standardised trace record for a vendor skill invocation.
 
-        Every Clawbio execution gets a JSON file under
-        ``results/clawbio_traces/<task_id>_<invocation_id>.json``
+        Every vendor execution gets a JSON file under
+        ``results/vendor_traces/<task_id>_<invocation_id>.json``
         so the Reviewer (and humans) can easily inspect the trail.
         """
-        trace_dir = self.dirs.clawbio_traces
+        trace_dir = self.dirs.vendor_traces
         trace_dir.mkdir(parents=True, exist_ok=True)
         filename = f"{task_id}_{invocation.invocation_id}.json"
         trace_path = trace_dir / filename
@@ -98,12 +98,15 @@ class WorkspaceManager:
             "recorded_at": datetime.now(timezone.utc).isoformat(),
         }
         trace_path.write_text(json.dumps(trace_data, indent=2))
-        logger.info("Clawbio trace saved → %s", trace_path)
+        logger.info("Vendor trace saved → %s", trace_path)
         return trace_path
 
-    def list_clawbio_traces(self, task_id: str | None = None) -> list[dict]:
-        """List Clawbio trace files, optionally filtered by task_id."""
-        trace_dir = self.dirs.clawbio_traces
+    # Backward-compatible alias
+    save_clawbio_trace = save_vendor_trace
+
+    def list_vendor_traces(self, task_id: str | None = None) -> list[dict]:
+        """List vendor trace files, optionally filtered by task_id."""
+        trace_dir = self.dirs.vendor_traces
         if not trace_dir.exists():
             return []
         results = []
@@ -114,6 +117,9 @@ class WorkspaceManager:
                 continue
             results.append(json.loads(f.read_text()))
         return results
+
+    # Backward-compatible alias
+    list_clawbio_traces = list_vendor_traces
 
     # ------------------------------------------------------------------
     # Persistence
