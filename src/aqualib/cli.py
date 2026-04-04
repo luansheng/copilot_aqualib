@@ -161,14 +161,20 @@ def run(
             # Extract skills_used from hook audit trail (written by on_post_tool_use hook)
             recent_entries = ws.load_context_log()
             task_skills: list[str] = []
+            found_prompt = False
             for entry in reversed(recent_entries):
                 # Stop at the user_prompt entry that marks the start of this task
                 if entry.get("event") == "user_prompt" and entry.get("query") == query:
+                    found_prompt = True
                     break
                 if entry.get("event") == "post_tool_use":
                     tool_name = entry.get("tool", "")
                     if tool_name.startswith("vendor_") and tool_name not in task_skills:
                         task_skills.append(tool_name)
+            if not found_prompt:
+                # No matching prompt found — discard collected skills to avoid
+                # accidentally attributing tools from a previous task
+                task_skills = []
             task_skills.reverse()  # chronological order
 
             # Write executor memory — CLI layer has the query context that SDK hooks don't
