@@ -20,16 +20,16 @@ Creates and maintains the canonical directory layout:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Union, overload
 
 from aqualib.config import Settings
-from aqualib.core.message import AuditReport, SkillInvocation, Task
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +38,11 @@ class WorkspaceManager:
     """Owns the on-disk layout and persistence of audit artefacts."""
 
     def __init__(self, settings: Settings) -> None:
+        self.settings = settings
         self.dirs = settings.directories
         self._ensure_dirs()
+        self._invocation_counter: int = 0
+        self._invocation_lock: asyncio.Lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Directory helpers
@@ -71,17 +74,35 @@ class WorkspaceManager:
         p.mkdir(parents=True, exist_ok=True)
         return p
 
+    async def next_invocation_dir(self) -> Path:
+        """Create and return a new sequential invocation directory under work/.
+
+        Used by the SDK tool adapter to provide an isolated scratch space for
+        each vendor skill call within the current session. Thread-safe via asyncio.Lock.
+        """
+        async with self._invocation_lock:
+            self._invocation_counter += 1
+            inv_dir = self.dirs.work / f"inv_{self._invocation_counter:04d}"
+        inv_dir.mkdir(parents=True, exist_ok=True)
+        return inv_dir
+
     # ------------------------------------------------------------------
     # Vendor trace logging
     # ------------------------------------------------------------------
 
-    def save_vendor_trace(self, task_id: str, invocation: SkillInvocation) -> Path:
-        """Write a standardised trace record for a vendor skill invocation.
+    def save_vendor_trace(
+        self,
+        task_id: str,
+        invocation: "Any",
+    ) -> Path:
+        """Write a standardised trace record for a vendor skill invocation (legacy path).
 
         Every vendor execution gets a JSON file under
-        ``results/vendor_traces/<task_id>_<invocation_id>.json``
-        so the Reviewer (and humans) can easily inspect the trail.
+        ``results/vendor_traces/<task_id>_<invocation_id>.json``.
+
+        For the Copilot SDK path, use :meth:`save_sdk_vendor_trace` instead.
         """
+
         trace_dir = self.dirs.vendor_traces
         trace_dir.mkdir(parents=True, exist_ok=True)
         filename = f"{task_id}_{invocation.invocation_id}.json"
@@ -102,6 +123,28 @@ class WorkspaceManager:
         }
         trace_path.write_text(json.dumps(trace_data, indent=2))
         logger.info("Vendor trace saved → %s", trace_path)
+        return trace_path
+
+    def save_sdk_vendor_trace(self, skill_name: str, trace: dict) -> Path:
+        """Write a vendor trace dict produced by the SDK tool adapter.
+
+        Used by the Copilot SDK integration layer (``sdk/tools.py``) where
+        there is no ``SkillInvocation`` object – just a simple dict with the
+        subprocess result.
+        """
+        trace_dir = self.dirs.vendor_traces
+        trace_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        invocation_id = uuid.uuid4().hex[:8]
+        filename = f"{skill_name}_{ts}_{invocation_id}.json"
+        trace_path = trace_dir / filename
+        trace_data = {
+            "skill_name": skill_name,
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            **trace,
+        }
+        trace_path.write_text(json.dumps(trace_data, indent=2))
+        logger.info("SDK vendor trace saved → %s", trace_path)
         return trace_path
 
     # Backward-compatible alias
@@ -158,6 +201,20 @@ class WorkspaceManager:
         """Write *meta* to ``project.json``."""
         self.dirs.project_file.write_text(json.dumps(meta, indent=2))
 
+    def update_project(self, updates: dict[str, Any]) -> dict[str, Any] | None:
+        """Merge *updates* into ``project.json`` and write it back.
+
+        Returns the updated metadata, or *None* if no project exists.
+        This is used by the SDK session manager to store ``session_id``.
+        """
+        meta = self.load_project()
+        if meta is None:
+            return None
+        meta.update(updates)
+        meta["updated_at"] = datetime.now(timezone.utc).isoformat()
+        self.save_project(meta)
+        return meta
+
     def append_context_log(self, entry: dict[str, Any]) -> None:
         """Append a single JSON line to ``context_log.jsonl``."""
         with open(self.dirs.context_log, "a") as fh:
@@ -174,6 +231,15 @@ class WorkspaceManager:
             if line:
                 entries.append(json.loads(line))
         return entries
+
+    def append_audit_entry(self, entry: dict[str, Any]) -> None:
+        """Append a hook audit entry to ``context_log.jsonl``.
+
+        Used by the SDK hooks (``on_pre_tool_use``, ``on_post_tool_use``, etc.)
+        to maintain a real-time audit trail.
+        """
+        entry.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
+        self.append_context_log(entry)
 
     def build_project_summary(self) -> str:
         """Build a human-readable cumulative summary from ``context_log.jsonl``."""
@@ -202,19 +268,42 @@ class WorkspaceManager:
             f"Last run: {last_date}."
         )
 
-    def update_project_after_task(self, task: Task) -> None:
+    @overload
+    def update_project_after_task(self, task: "Any") -> None: ...
+
+    @overload
+    def update_project_after_task(self, task_or_query: str, messages: list | None = None) -> None: ...
+
+    def update_project_after_task(
+        self,
+        task_or_query: "Union[Any, str]",
+        messages: list | None = None,
+    ) -> None:
         """Increment counters, append context log, and regenerate summary.
 
-        Called after every ``save_task`` in the orchestrator pipeline.
+        Accepts two call signatures:
+
+        * **Legacy** (registry-based pipeline):
+          ``update_project_after_task(task: Task)``
+        * **SDK** (Copilot SDK path):
+          ``update_project_after_task(query: str, messages: list)``
         """
+        if isinstance(task_or_query, str):
+            # SDK path: query + result messages
+            self._update_project_after_sdk_task(task_or_query, messages or [])
+        else:
+            # Legacy path: Task object
+            self._update_project_after_legacy_task(task_or_query)
+
+    def _update_project_after_legacy_task(self, task: "Any") -> None:
+        """Called after every ``save_task`` in the legacy orchestrator pipeline."""
         meta = self.load_project()
         if meta is None:
-            return  # no project initialised – skip silently
+            return
 
         meta["task_count"] = meta.get("task_count", 0) + 1
         meta["updated_at"] = datetime.now(timezone.utc).isoformat()
 
-        # Build context log entry
         skills_used = [inv.skill_name for inv in task.skill_invocations]
         entry: dict[str, Any] = {
             "task_id": task.task_id,
@@ -229,6 +318,35 @@ class WorkspaceManager:
         meta["summary"] = self.build_project_summary()
         self.save_project(meta)
 
+    def _update_project_after_sdk_task(self, query: str, messages: list) -> None:
+        """Called by the SDK CLI path after a session completes."""
+        meta = self.load_project()
+        if meta is None:
+            return
+
+        meta["task_count"] = meta.get("task_count", 0) + 1
+        meta["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        entry: dict[str, Any] = {
+            "task_id": uuid.uuid4().hex[:8],
+            "query": query,
+            "status": "completed",
+            "skills_used": [],
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        self.append_context_log(entry)
+
+        meta["summary"] = self.build_project_summary()
+        self.save_project(meta)
+
+    def finalize_task(self) -> None:
+        """Post-task cleanup called from the ``on_session_end`` hook.
+
+        Currently a no-op placeholder — future implementations may flush
+        buffers, compact logs, or snapshot state.
+        """
+        logger.info("Task finalised – workspace state is up-to-date.")
+
     # ------------------------------------------------------------------
     # Data-file scanning (fallback when RAG is unavailable)
     # ------------------------------------------------------------------
@@ -238,15 +356,18 @@ class WorkspaceManager:
         query: str,
         *,
         max_files: int = 10,
+        max_results: int | None = None,
         max_chars_per_file: int = 500,
         extensions: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Grep-like scan of data/ files for query keywords.
 
         Returns a list of dicts with file path and matching snippets.
-        This is the fallback when RAG is unavailable — much simpler than
-        vector search but gives the Searcher basic file awareness.
+        ``max_results`` is an alias for ``max_files`` (used by SDK tool adapter).
         """
+        if max_results is not None:
+            max_files = max_results
+
         if extensions is None:
             extensions = {".txt", ".md", ".json", ".csv", ".yaml", ".yml"}
 
@@ -274,7 +395,6 @@ class WorkspaceManager:
             if not matched_keywords:
                 continue
 
-            # Extract a snippet around the first match
             first_kw = matched_keywords[0]
             idx = text_lower.find(first_kw)
             start = max(0, idx - 100)
@@ -291,7 +411,6 @@ class WorkspaceManager:
             if len(results) >= max_files:
                 break
 
-        # Sort by number of keyword matches (most relevant first)
         results.sort(key=lambda r: r["keyword_count"], reverse=True)
         return results
 
@@ -299,7 +418,7 @@ class WorkspaceManager:
     # Persistence
     # ------------------------------------------------------------------
 
-    def save_audit_report(self, report: AuditReport) -> Path:
+    def save_audit_report(self, report: "Any") -> Path:
         """Write both JSON and Markdown versions of the audit report."""
         td = self.task_dir(report.task_id)
         json_path = td / "audit_report.json"
@@ -310,7 +429,7 @@ class WorkspaceManager:
         logger.info("Audit report saved → %s", td)
         return td
 
-    def save_task(self, task: Task) -> Path:
+    def save_task(self, task: "Any") -> Path:
         """Persist the full task state as JSON."""
         td = self.task_dir(task.task_id)
         path = td / "task_state.json"
@@ -321,7 +440,9 @@ class WorkspaceManager:
     # Reading
     # ------------------------------------------------------------------
 
-    def load_task(self, task_id: str) -> Task | None:
+    def load_task(self, task_id: str) -> "Any | None":
+        from aqualib.core.message import Task
+
         path = self.task_dir(task_id) / "task_state.json"
         if not path.exists():
             return None
@@ -335,7 +456,9 @@ class WorkspaceManager:
             d.name for d in self.dirs.results.iterdir() if d.is_dir() and (d / "task_state.json").exists()
         )
 
-    def load_audit_report(self, task_id: str) -> AuditReport | None:
+    def load_audit_report(self, task_id: str) -> "Any | None":
+        from aqualib.core.message import AuditReport
+
         path = self.task_dir(task_id) / "audit_report.json"
         if not path.exists():
             return None
