@@ -1,8 +1,11 @@
-"""AquaLib REST API server (FastAPI).
+"""AquaLib REST API server (FastAPI) — **experimental**.
+
+This module is functional but considered experimental. The CLI (``aqualib``)
+is the primary and fully supported interface.
 
 Start with:
-    aqualib-api              (via console_scripts, see pyproject.toml)
-    uvicorn aqualib.api:app  (direct)
+    pip install aqualib[api]
+    uvicorn aqualib.api:app
 """
 
 from __future__ import annotations
@@ -10,8 +13,14 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+try:
+    from fastapi import FastAPI, HTTPException
+    from pydantic import BaseModel, Field
+except ImportError:
+    raise ImportError(
+        "The REST API requires extra dependencies. "
+        "Install them with: pip install aqualib[api]"
+    ) from None
 
 from aqualib.bootstrap import build_orchestrator, build_registry
 from aqualib.config import get_settings
@@ -41,7 +50,7 @@ async def lifespan(application: FastAPI):
 app = FastAPI(
     title="AquaLib API",
     version="0.1.0",
-    description="Multi-agent framework with Clawbio skill priority and RAG retrieval.",
+    description="Multi-agent framework with vendor skill priority and RAG retrieval.",
     lifespan=lifespan,
 )
 
@@ -58,7 +67,7 @@ class TaskSummary(BaseModel):
     task_id: str
     status: str
     review_passed: bool | None
-    clawbio_priority_satisfied: bool | None
+    vendor_priority_satisfied: bool | None
     review_notes: str
     skill_invocations: list[dict[str, Any]]
 
@@ -84,7 +93,7 @@ async def run_task(req: RunRequest):
         task_id=task.task_id,
         status=task.status.value,
         review_passed=task.review_passed,
-        clawbio_priority_satisfied=task.clawbio_priority_satisfied,
+        vendor_priority_satisfied=task.vendor_priority_satisfied,
         review_notes=task.review_notes,
         skill_invocations=[inv.model_dump(mode="json") for inv in task.skill_invocations],
     )
@@ -102,7 +111,7 @@ async def list_skills():
             description=s.meta.description,
             tags=s.meta.tags,
         )
-        for s in registry.list_clawbio() + registry.list_generic()
+        for s in registry.list_vendor() + registry.list_generic()
     ]
 
 
