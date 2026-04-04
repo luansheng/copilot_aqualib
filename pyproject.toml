@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "aqualib"
 version = "0.1.0"
-description = "AquaLib – Multi-agent framework with Executor, Reviewer, and Searcher agents, Clawbio skill priority, and RAG-powered information retrieval."
+description = "AquaLib – Multi-agent framework with Executor, Reviewer, and Searcher agents, vendor skill priority, and RAG-powered information retrieval."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
@@ -28,20 +28,24 @@ dependencies = [
     "typer>=0.9.0",
     "rich>=13.0",
     "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+api = [
     "uvicorn>=0.27.0",
     "fastapi>=0.110.0",
     "jinja2>=3.1.0",
 ]
-
-[project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "ruff>=0.3.0",
+    "aqualib[api]",
 ]
 
 [project.scripts]
 aqualib = "aqualib.cli:app"
+aqualib-api = "aqualib.api:serve"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/aqualib"]

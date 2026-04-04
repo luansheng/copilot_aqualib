@@ -409,6 +409,49 @@ async def main():
 asyncio.run(main())
 ```
 
+## REST API (Experimental)
+
+AquaLib includes an optional REST API built with FastAPI. This is experimental and may change in future versions. The CLI (`aqualib`) remains the primary interface.
+
+### Installation
+
+```bash
+pip install -e ".[api]"
+```
+
+### Starting the server
+
+```bash
+# Via entry point
+aqualib-api
+
+# Or directly with uvicorn
+uvicorn aqualib.api:app --host 0.0.0.0 --port 8000
+```
+
+The server reads `aqualib.yaml` and `aqualib_workspace/` from the **current working directory**, just like the CLI.
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/run` | Execute the full agent pipeline |
+| `GET` | `/skills` | List all registered skills |
+| `GET` | `/tasks` | List completed tasks |
+| `GET` | `/tasks/{task_id}` | Get full task state |
+| `GET` | `/tasks/{task_id}/report` | Get audit report (JSON or Markdown) |
+| `GET` | `/tasks/{task_id}/skills` | List skill invocation outputs |
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/run \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Align the protein sequences MVKLF and MVKLT"}'
+```
+
+> **Note:** This API is experimental. For production use, the CLI is recommended.
+
 ## Development
 
 ```bash

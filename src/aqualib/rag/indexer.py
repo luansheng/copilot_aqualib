@@ -113,6 +113,7 @@ class RAGIndexer:
             except Exception as exc:
                 logger.warning("Failed to load persisted index: %s – rebuilding.", exc)
         await self.build_index()
+        self.persist()
 
     # ------------------------------------------------------------------
     # Public accessor
