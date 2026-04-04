@@ -1,4 +1,4 @@
-"""Example Clawbio skills – placeholders for real implementations.
+"""Example vendor skills – placeholders for real implementations.
 
 Each skill follows the ``BaseSkill`` contract and writes its artefacts
 into the provided ``output_dir`` so the reviewer can inspect them.
@@ -15,13 +15,13 @@ from aqualib.skills.skill_base import BaseSkill, SkillMeta
 
 
 class SequenceAlignmentSkill(BaseSkill):
-    """Run a Clawbio sequence-alignment pipeline."""
+    """Run a vendor sequence-alignment pipeline."""
 
     meta = SkillMeta(
         name="clawbio_sequence_alignment",
-        description="Perform pairwise or multiple sequence alignment using Clawbio algorithms.",
-        source=SkillSource.CLAWBIO,
-        tags=["alignment", "sequence", "bioinformatics", "clawbio"],
+        description="Perform pairwise or multiple sequence alignment using vendor algorithms.",
+        source=SkillSource.VENDOR,
+        tags=["alignment", "sequence", "bioinformatics", "vendor"],
         parameters_schema={
             "sequences": {"type": "array", "items": {"type": "string"}},
             "algorithm": {"type": "string", "default": "needleman-wunsch"},
@@ -42,13 +42,13 @@ class SequenceAlignmentSkill(BaseSkill):
 
 
 class StructurePredictionSkill(BaseSkill):
-    """Predict protein structure via Clawbio models."""
+    """Predict protein structure via vendor models."""
 
     meta = SkillMeta(
         name="clawbio_structure_prediction",
-        description="Predict 3D protein structure from amino-acid sequence using Clawbio ML models.",
-        source=SkillSource.CLAWBIO,
-        tags=["structure", "protein", "prediction", "ml", "clawbio"],
+        description="Predict 3D protein structure from amino-acid sequence using vendor ML models.",
+        source=SkillSource.VENDOR,
+        tags=["structure", "protein", "prediction", "ml", "vendor"],
         parameters_schema={
             "sequence": {"type": "string"},
             "model_version": {"type": "string", "default": "v2"},
@@ -68,13 +68,13 @@ class StructurePredictionSkill(BaseSkill):
 
 
 class GeneExpressionAnalysisSkill(BaseSkill):
-    """Analyse gene expression data using Clawbio statistical methods."""
+    """Analyse gene expression data using vendor statistical methods."""
 
     meta = SkillMeta(
         name="clawbio_gene_expression",
-        description="Differential gene-expression analysis with Clawbio normalisation and statistical testing.",
-        source=SkillSource.CLAWBIO,
-        tags=["gene", "expression", "RNA", "statistics", "clawbio"],
+        description="Differential gene-expression analysis with vendor normalisation and statistical testing.",
+        source=SkillSource.VENDOR,
+        tags=["gene", "expression", "RNA", "statistics", "vendor"],
         parameters_schema={
             "dataset_path": {"type": "string"},
             "conditions": {"type": "array", "items": {"type": "string"}},

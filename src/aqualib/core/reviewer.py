@@ -1,4 +1,4 @@
-"""Reviewer agent – audits executor output with Clawbio-priority scepticism."""
+"""Reviewer agent – audits executor output with vendor-priority scepticism."""
 
 from __future__ import annotations
 
@@ -21,28 +21,28 @@ You are the **Reviewer** agent of the AquaLib framework.
 
 Your responsibilities:
 1. Audit the executor's work for correctness, completeness, and quality.
-2. **Clawbio Priority Enforcement** – Maintain a sceptical stance.  Ask:
-   "Could a Clawbio skill have been used instead of a generic tool?"
+2. **Vendor Priority Enforcement** – Maintain a sceptical stance.  Ask:
+   "Could a vendor skill have been used instead of a generic tool?"
    If yes, the review MUST flag this as a priority violation.
 3. Return your review as JSON:
-   {
+   {{
      "approved": true/false,
-     "clawbio_priority_satisfied": true/false,
+     "vendor_priority_satisfied": true/false,
      "verdict": "...",
-     "clawbio_priority_notes": "...",
+     "vendor_priority_notes": "...",
      "suggestions": ["..."]
-   }
+   }}
 
 Skill invocations to review:
 {invocations_json}
 
-Available Clawbio skills for reference:
-{clawbio_skills_json}
+Available vendor skills for reference:
+{vendor_skills_json}
 """
 
 
 class ReviewerAgent(BaseAgent):
-    """Audits the executor's work, enforcing Clawbio priority."""
+    """Audits the executor's work, enforcing vendor priority."""
 
     name = "Reviewer"
     role = Role.REVIEWER
@@ -61,17 +61,17 @@ class ReviewerAgent(BaseAgent):
         review = await self._review(task)
 
         approved = review.get("approved", False)
-        clawbio_ok = review.get("clawbio_priority_satisfied", False)
+        vendor_ok = review.get("vendor_priority_satisfied", False)
         verdict = review.get("verdict", "")
-        clawbio_notes = review.get("clawbio_priority_notes", "")
+        vendor_notes = review.get("vendor_priority_notes", "")
 
         task.review_passed = approved
-        task.clawbio_priority_satisfied = clawbio_ok
+        task.vendor_priority_satisfied = vendor_ok
         task.review_notes = verdict
         task.status = TaskStatus.APPROVED if approved else TaskStatus.NEEDS_REVISION
 
         task.add_message(self.role, f"Review verdict: {'✅ APPROVED' if approved else '❌ NEEDS REVISION'}")
-        task.add_message(self.role, f"Clawbio priority: {'✅ OK' if clawbio_ok else '⚠️ VIOLATION – ' + clawbio_notes}")
+        task.add_message(self.role, f"Vendor priority: {'✅ OK' if vendor_ok else '⚠️ VIOLATION – ' + vendor_notes}")
 
         if review.get("suggestions"):
             task.add_message(self.role, "Suggestions:\n" + "\n".join(f"- {s}" for s in review["suggestions"]))
@@ -83,7 +83,7 @@ class ReviewerAgent(BaseAgent):
             status=task.status,
             executor_summary=self._executor_summary(task),
             reviewer_verdict=verdict,
-            clawbio_priority_check=clawbio_notes or ("Satisfied" if clawbio_ok else "Not evaluated"),
+            vendor_priority_check=vendor_notes or ("Satisfied" if vendor_ok else "Not evaluated"),
             skill_invocations=task.skill_invocations,
             messages=task.messages,
         )
@@ -99,16 +99,16 @@ class ReviewerAgent(BaseAgent):
         invocations_json = json.dumps(
             [inv.model_dump(mode="json") for inv in task.skill_invocations], indent=2
         )
-        clawbio_descs = [
+        vendor_descs = [
             {"name": s.meta.name, "description": s.meta.description, "tags": s.meta.tags}
-            for s in self.registry.list_clawbio()
+            for s in self.registry.list_vendor()
         ]
         messages = [
             {
                 "role": "system",
                 "content": _SYSTEM_PROMPT.format(
                     invocations_json=invocations_json,
-                    clawbio_skills_json=json.dumps(clawbio_descs, indent=2),
+                    vendor_skills_json=json.dumps(vendor_descs, indent=2),
                 ),
             },
             {"role": "user", "content": f"User query: {task.user_query}\n\nPlease review."},
@@ -122,7 +122,7 @@ class ReviewerAgent(BaseAgent):
             return json.loads(raw.strip())
         except (json.JSONDecodeError, IndexError):
             logger.warning("Reviewer LLM returned non-JSON: %s", raw[:200])
-            return {"approved": False, "verdict": raw[:500], "clawbio_priority_satisfied": False}
+            return {"approved": False, "verdict": raw[:500], "vendor_priority_satisfied": False}
 
     # ------------------------------------------------------------------
     # Helpers
@@ -132,8 +132,8 @@ class ReviewerAgent(BaseAgent):
     def _executor_summary(task: Task) -> str:
         ok = sum(1 for i in task.skill_invocations if i.success)
         total = len(task.skill_invocations)
-        clawbio_count = sum(1 for i in task.skill_invocations if i.source == SkillSource.CLAWBIO)
+        vendor_count = sum(1 for i in task.skill_invocations if i.source == SkillSource.VENDOR)
         return (
             f"{ok}/{total} skill invocations succeeded. "
-            f"{clawbio_count} Clawbio skill(s) used."
+            f"{vendor_count} vendor skill(s) used."
         )

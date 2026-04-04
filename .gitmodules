@@ -1,0 +1,3 @@
+[submodule "vendor/ClawBio"]
+	path = vendor/ClawBio
+	url = https://github.com/kzy599/ClawBio.git

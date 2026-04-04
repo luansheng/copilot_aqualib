@@ -1,4 +1,4 @@
-"""Global skill registry with Clawbio-first resolution."""
+"""Global skill registry with vendor-first resolution."""
 
 from __future__ import annotations
 
@@ -14,14 +14,14 @@ logger = logging.getLogger(__name__)
 class SkillRegistry:
     """Singleton-ish registry that knows every registered skill.
 
-    Resolution order when ``clawbio_priority`` is ``True``:
-      1. Clawbio skills matching the query
+    Resolution order when ``vendor_priority`` is ``True``:
+      1. Vendor skills matching the query
       2. Generic / external skills matching the query
     """
 
-    def __init__(self, *, clawbio_priority: bool = True) -> None:
+    def __init__(self, *, vendor_priority: bool = True) -> None:
         self._skills: dict[str, BaseSkill] = {}
-        self.clawbio_priority = clawbio_priority
+        self.vendor_priority = vendor_priority
 
     # ------------------------------------------------------------------
     # Registration
@@ -44,11 +44,14 @@ class SkillRegistry:
     def list_all(self) -> list[BaseSkill]:
         return list(self._skills.values())
 
-    def list_clawbio(self) -> list[BaseSkill]:
-        return [s for s in self._skills.values() if s.meta.source == SkillSource.CLAWBIO]
+    def list_vendor(self) -> list[BaseSkill]:
+        return [s for s in self._skills.values() if s.meta.source == SkillSource.VENDOR]
 
     def list_generic(self) -> list[BaseSkill]:
-        return [s for s in self._skills.values() if s.meta.source != SkillSource.CLAWBIO]
+        return [s for s in self._skills.values() if s.meta.source != SkillSource.VENDOR]
+
+    # Backward-compatible alias
+    list_clawbio = list_vendor
 
     # ------------------------------------------------------------------
     # Resolution (used by the executor to pick the best skill)
@@ -64,8 +67,8 @@ class SkillRegistry:
         tags_lower = {t.lower() for t in (tags or [])}
 
         def _score(skill: BaseSkill) -> tuple[int, int]:
-            # priority bucket: 0 = clawbio, 1 = other
-            bucket = 0 if skill.meta.source == SkillSource.CLAWBIO and self.clawbio_priority else 1
+            # priority bucket: 0 = vendor, 1 = other
+            bucket = 0 if skill.meta.source == SkillSource.VENDOR and self.vendor_priority else 1
             # relevance: simple keyword overlap
             text = f"{skill.meta.name} {skill.meta.description} {' '.join(skill.meta.tags)}".lower()
             overlap = sum(1 for word in query_lower.split() if word in text)

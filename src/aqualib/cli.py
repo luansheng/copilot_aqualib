@@ -21,7 +21,7 @@ from rich.table import Table
 
 app = typer.Typer(
     name="aqualib",
-    help="AquaLib – Multi-agent framework with Clawbio skill priority and RAG retrieval.",
+    help="AquaLib – Multi-agent framework with vendor skill priority and RAG retrieval.",
     add_completion=False,
 )
 console = Console()
@@ -76,7 +76,7 @@ def run(
     rprint(Panel(
         f"[bold]Task:[/bold] {task.task_id}\n"
         f"[bold]Status:[/bold] [{status_colour}]{task.status.value}[/{status_colour}]\n"
-        f"[bold]Clawbio Priority:[/bold] {'✅' if task.clawbio_priority_satisfied else '⚠️'}\n"
+        f"[bold]Vendor Priority:[/bold] {'✅' if task.vendor_priority_satisfied else '⚠️'}\n"
         f"[bold]Review:[/bold] {task.review_notes[:200] or 'N/A'}",
         title="🐙 AquaLib Result",
     ))
@@ -105,7 +105,7 @@ def skills(
     base_dir: str | None = typer.Option(None, "--base-dir", "-d"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
-    """List all registered skills (Clawbio skills shown first)."""
+    """List all registered skills (vendor skills shown first)."""
     settings = _get_settings(base_dir, verbose)
     from aqualib.bootstrap import build_registry
 
@@ -117,7 +117,7 @@ def skills(
     table.add_column("Description")
     table.add_column("Tags", style="dim")
 
-    for skill in registry.list_clawbio() + registry.list_generic():
+    for skill in registry.list_vendor() + registry.list_generic():
         table.add_row(
             skill.meta.name,
             skill.meta.source.value,
@@ -200,12 +200,12 @@ def init(
     rprint(f"   work/              → {settings.directories.work}")
     rprint(f"   results/           → {settings.directories.results}")
     rprint(f"   data/              → {settings.directories.data}")
-    rprint(f"   skills/clawbio/    → {settings.directories.skills_clawbio}")
-    rprint(f"   clawbio_traces/    → {settings.directories.clawbio_traces}")
+    rprint(f"   skills/vendor/     → {settings.directories.skills_vendor}")
+    rprint(f"   vendor_traces/     → {settings.directories.vendor_traces}")
     rprint()
     rprint(
-        "[dim]Drop your Clawbio skill library into [bold]skills/clawbio/[/bold] – "
-        "it will be auto-discovered at runtime.[/dim]"
+        "[dim]Drop your vendor skill libraries into [bold]skills/vendor/[/bold] – "
+        "they will be auto-discovered at runtime.[/dim]"
     )
 
 

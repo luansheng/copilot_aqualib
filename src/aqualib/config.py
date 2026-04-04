@@ -27,13 +27,13 @@ class DirectorySettings(BaseModel):
     work: Path = Field(default=Path("work"), description="Intermediate / scratch files")
     results: Path = Field(default=Path("results"), description="Final outputs & audit reports")
     data: Path = Field(default=Path("data"), description="Input data & RAG corpus")
-    skills_clawbio: Path = Field(
-        default=Path("skills/clawbio"),
-        description="Mount point for the external Clawbio skill library.",
+    skills_vendor: Path = Field(
+        default=Path("skills/vendor"),
+        description="Mount point for external vendor skill libraries.",
     )
-    clawbio_traces: Path = Field(
-        default=Path("results/clawbio_traces"),
-        description="Dedicated trace logs for every Clawbio skill invocation.",
+    vendor_traces: Path = Field(
+        default=Path("results/vendor_traces"),
+        description="Dedicated trace logs for every vendor skill invocation.",
     )
 
     def resolve(self) -> "DirectorySettings":
@@ -43,8 +43,8 @@ class DirectorySettings(BaseModel):
             work=(self.base / self.work).resolve(),
             results=(self.base / self.results).resolve(),
             data=(self.base / self.data).resolve(),
-            skills_clawbio=(self.base / self.skills_clawbio).resolve(),
-            clawbio_traces=(self.base / self.clawbio_traces).resolve(),
+            skills_vendor=(self.base / self.skills_vendor).resolve(),
+            vendor_traces=(self.base / self.vendor_traces).resolve(),
         )
 
 
@@ -73,9 +73,9 @@ class Settings(BaseModel):
     directories: DirectorySettings = Field(default_factory=DirectorySettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     rag: RAGSettings = Field(default_factory=RAGSettings)
-    clawbio_priority: bool = Field(
+    vendor_priority: bool = Field(
         default=True,
-        description="When True the framework *always* prefers Clawbio skills over generic tools.",
+        description="When True the framework *always* prefers vendor skills over generic tools.",
     )
     verbose: bool = False
 

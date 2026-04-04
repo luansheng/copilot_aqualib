@@ -4,7 +4,7 @@
 import asyncio
 
 from aqualib.bootstrap import build_orchestrator
-from aqualib.config import Settings, DirectorySettings, LLMSettings
+from aqualib.config import DirectorySettings, LLMSettings, Settings
 
 
 async def main():
@@ -12,7 +12,7 @@ async def main():
     settings = Settings(
         directories=DirectorySettings(base="./my_workspace").resolve(),
         llm=LLMSettings(model="gpt-4o"),
-        clawbio_priority=True,
+        vendor_priority=True,
     )
 
     # 2. Build the orchestrator (wires all agents + RAG)

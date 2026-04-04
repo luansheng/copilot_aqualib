@@ -1,4 +1,4 @@
-"""Unit tests for Clawbio skills."""
+"""Unit tests for vendor skills."""
 
 from pathlib import Path
 
@@ -20,7 +20,7 @@ def out_dir(tmp_path: Path) -> Path:
 @pytest.mark.asyncio
 async def test_sequence_alignment(out_dir: Path):
     skill = SequenceAlignmentSkill()
-    assert skill.meta.source == SkillSource.CLAWBIO
+    assert skill.meta.source == SkillSource.VENDOR
     result = await skill.execute(
         {"sequences": ["ATCG", "ATCG"], "algorithm": "needleman-wunsch"},
         out_dir,

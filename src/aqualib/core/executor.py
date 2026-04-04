@@ -23,7 +23,7 @@ You are the **Executor** agent of the AquaLib framework.
 
 Your job:
 1. Analyse the user query and the available skills.
-2. **Always prefer Clawbio skills** over generic or external tools when there
+2. **Always prefer vendor skills** over generic or external tools when there
    is *any* possibility of using them – even if a generic tool would be simpler.
 3. Return a JSON array of skill invocation plans.  Each element:
    {"skill_name": "...", "parameters": {...}, "reason": "..."}
@@ -132,8 +132,8 @@ class ExecutorAgent(BaseAgent):
         finally:
             inv.finished_at = datetime.now(timezone.utc)
 
-        # Write Clawbio trace for auditability
-        if inv.source == SkillSource.CLAWBIO:
-            self.workspace.save_clawbio_trace(task.task_id, inv)
+        # Write vendor trace for auditability
+        if inv.source == SkillSource.VENDOR:
+            self.workspace.save_vendor_trace(task.task_id, inv)
 
         return inv
