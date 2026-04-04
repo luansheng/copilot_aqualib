@@ -62,9 +62,18 @@ def run(
     """Run the full agent pipeline (Searcher → Executor → Reviewer)."""
     settings = _get_settings(base_dir, verbose)
 
-    # Warn if no project has been initialised
+    # Project awareness
     if not settings.directories.project_file.exists():
         rprint("[yellow]⚠️ No project found. Run 'aqualib init' first to set up your workspace.[/yellow]")
+    else:
+        import json
+
+        meta = json.loads(settings.directories.project_file.read_text())
+        task_count = meta.get("task_count", 0)
+        rprint(
+            f"[cyan]📂 Project: {meta.get('name', 'unknown')} "
+            f"({task_count} previous tasks)[/cyan]"
+        )
 
     async def _run():
         from aqualib.bootstrap import build_orchestrator
