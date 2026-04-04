@@ -83,6 +83,7 @@ def run(
     project = ws.load_project()
     if project is None:
         rprint("[yellow]⚠️ No project found. Run 'aqualib init' first to set up your workspace.[/yellow]")
+        raise typer.Exit(1)
 
     # Determine session slug
     target_slug: str | None = None
@@ -157,7 +158,33 @@ def run(
             await sdk_session.send(query)
             await done.wait()
 
-            ws.update_session_after_task(actual_slug, query, result_messages)
+            # Extract skills_used from hook audit trail (written by on_post_tool_use hook)
+            recent_entries = ws.load_context_log()
+            task_skills: list[str] = []
+            found_prompt = False
+            for entry in reversed(recent_entries):
+                # Stop at the user_prompt entry that marks the start of this task
+                if entry.get("event") == "user_prompt" and entry.get("query") == query:
+                    found_prompt = True
+                    break
+                if entry.get("event") == "post_tool_use":
+                    tool_name = entry.get("tool", "")
+                    if tool_name.startswith("vendor_") and tool_name not in task_skills:
+                        task_skills.append(tool_name)
+            if not found_prompt:
+                # No matching prompt found — discard collected skills to avoid
+                # accidentally attributing tools from a previous task
+                task_skills = []
+            task_skills.reverse()  # chronological order
+
+            # Write executor memory — CLI layer has the query context that SDK hooks don't
+            ws.append_agent_memory_entry(actual_slug, "executor", {
+                "query": query,
+                "skills_used": task_skills,
+                "output_preview": (result_messages[-1][:200] if result_messages else ""),
+            })
+
+            ws.update_session_after_task(actual_slug, query, result_messages, skills_used=task_skills)
             return result_messages
 
         finally:
@@ -466,6 +493,21 @@ def status(
     rprint(f"   [bold]Tasks:[/bold]    {task_count}{tasks_detail}")
     rprint(f"   [bold]Data:[/bold]     {data_summary}")
     rprint(f"   [bold]Skills:[/bold]   {skills_summary}")
+
+    # Session information (AquaLib workspace metadata, not SDK internal state)
+    all_sessions = ws.list_sessions()
+    active = ws.get_active_session()
+    if all_sessions:
+        active_slug = active["slug"] if active else "none"
+        rprint(f"   [bold]Sessions:[/bold] {len(all_sessions)} total, active: {active_slug}")
+        for s in all_sessions[:3]:  # show top 3 most recent
+            indicator = "▶ " if s["slug"] == active_slug else "  "
+            rprint(
+                f"     {indicator}{s.get('name', s['slug'])} "
+                f"({s.get('task_count', 0)} tasks, {s.get('updated_at', '')[:10]})"
+            )
+        if len(all_sessions) > 3:
+            rprint(f"     ... and {len(all_sessions) - 3} more (use 'aqualib sessions' to see all)")
 
     if entries:
         rprint()

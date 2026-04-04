@@ -58,7 +58,11 @@ except ImportError:
     ReadSkillParams = None  # type: ignore[assignment,misc]
     RAGSearchParams = None  # type: ignore[assignment,misc]
 
-def build_tools_from_skills(settings: "Settings", workspace: "WorkspaceManager") -> list:
+def build_tools_from_skills(
+    settings: "Settings",
+    workspace: "WorkspaceManager",
+    session_slug: str | None = None,
+) -> list:
     """Scan all SKILL.md files and convert each vendor skill to a Copilot SDK tool.
 
     Returns a list of tool callables decorated with ``@define_tool`` (or equivalent
@@ -70,7 +74,7 @@ def build_tools_from_skills(settings: "Settings", workspace: "WorkspaceManager")
     tools: list = []
 
     for meta in skill_metas:
-        tool = _create_vendor_tool(meta, workspace)
+        tool = _create_vendor_tool(meta, workspace, session_slug=session_slug)
         tools.append(tool)
 
     tools.append(_create_workspace_search_tool(workspace))
@@ -90,7 +94,7 @@ def build_tools_from_skills(settings: "Settings", workspace: "WorkspaceManager")
 # ---------------------------------------------------------------------------
 
 
-def _create_vendor_tool(meta: "SkillMeta", workspace: "WorkspaceManager") -> Any:
+def _create_vendor_tool(meta: "SkillMeta", workspace: "WorkspaceManager", session_slug: str | None = None) -> Any:
     """Create a Copilot SDK tool for a single vendor skill."""
     try:
         from copilot import define_tool
@@ -100,7 +104,7 @@ def _create_vendor_tool(meta: "SkillMeta", workspace: "WorkspaceManager") -> Any
             description=f"[VENDOR] {meta.description}. Tags: {', '.join(meta.tags)}",
         )
         async def vendor_skill_tool(params: VendorSkillParams) -> str:
-            return await _run_vendor_skill(meta, workspace, params.parameters)
+            return await _run_vendor_skill(meta, workspace, params.parameters, session_slug=session_slug)
 
         return vendor_skill_tool
 
@@ -109,7 +113,10 @@ def _create_vendor_tool(meta: "SkillMeta", workspace: "WorkspaceManager") -> Any
         return _make_stub_tool(
             name=f"vendor_{meta.name}",
             description=f"[VENDOR] {meta.description}. Tags: {', '.join(meta.tags)}",
-            fn=lambda params: _run_vendor_skill(meta, workspace, params.get("parameters", {})),
+            fn=lambda params: _run_vendor_skill(
+                meta, workspace, params.get("parameters", {}),
+                session_slug=session_slug,
+            ),
         )
 
 
@@ -190,6 +197,7 @@ async def _run_vendor_skill(
     meta: "SkillMeta",
     workspace: "WorkspaceManager",
     parameters: dict,
+    session_slug: str | None = None,
 ) -> str:
     """Execute a vendor skill via subprocess and return the result as a string."""
     entry = _resolve_entry_point(meta)
@@ -221,6 +229,7 @@ async def _run_vendor_skill(
             "stdout": stdout.decode(errors="replace")[:2000],
             "stderr": stderr.decode(errors="replace")[:2000],
         },
+        session_slug=session_slug,
     )
 
     if proc.returncode != 0:
@@ -315,7 +324,8 @@ def _is_rag_available(settings: "Settings") -> bool:
     rag = settings.rag
     if rag.enabled:
         return True
-    if rag.api_key or settings.llm.api_key:
+    # Only activate if user explicitly set a RAG-specific API key
+    if rag.api_key and rag.api_key != settings.llm.api_key:
         return True
     return False
 

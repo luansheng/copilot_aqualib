@@ -270,15 +270,16 @@ class TestBuildCustomAgentsMemoryInjection:
 
 
 # ---------------------------------------------------------------------------
-# on_session_end hook writes executor memory
+# on_session_end hook — resource cleanup only (executor memory moved to CLI)
 # ---------------------------------------------------------------------------
 
 
 class TestSessionEndHookMemory:
     @pytest.mark.asyncio
-    async def test_writes_executor_memory_on_session_end(
+    async def test_session_end_does_not_write_executor_memory(
         self, workspace: WorkspaceManager, session_slug: str
     ):
+        """on_session_end hook should only call finalize_task(), not write executor memory."""
         from aqualib.sdk.hooks import _make_session_end_hook
 
         hook = _make_session_end_hook(workspace, session_slug)
@@ -292,9 +293,7 @@ class TestSessionEndHookMemory:
         )
 
         mem = workspace.load_agent_memory(session_slug, "executor")
-        assert len(mem["entries"]) == 1
-        assert mem["entries"][0]["query"] == "align sequences"
-        assert mem["entries"][0]["skills_used"] == ["sequence_alignment"]
+        assert len(mem["entries"]) == 0
 
     @pytest.mark.asyncio
     async def test_does_not_write_when_no_slug(self, workspace: WorkspaceManager):
@@ -303,3 +302,43 @@ class TestSessionEndHookMemory:
         hook = _make_session_end_hook(workspace, None)
         # Should not raise
         await hook({"query": "test", "skills_used": []}, None)
+
+
+# ---------------------------------------------------------------------------
+# CLI-layer executor memory write (Bug 1 fix)
+# ---------------------------------------------------------------------------
+
+
+class TestCLIExecutorMemoryWrite:
+    def test_append_agent_memory_entry_writes_executor_memory(
+        self, workspace: WorkspaceManager, session_slug: str
+    ):
+        """CLI layer should write executor memory with query, skills_used, output_preview."""
+        query = "align sequences"
+        task_skills = ["vendor_seq_align"]
+        result_messages = ["Alignment completed with score 0.85"]
+
+        workspace.append_agent_memory_entry(session_slug, "executor", {
+            "query": query,
+            "skills_used": task_skills,
+            "output_preview": (result_messages[-1][:200] if result_messages else ""),
+        })
+
+        mem = workspace.load_agent_memory(session_slug, "executor")
+        assert len(mem["entries"]) == 1
+        assert mem["entries"][0]["query"] == "align sequences"
+        assert mem["entries"][0]["skills_used"] == ["vendor_seq_align"]
+        assert "score 0.85" in mem["entries"][0]["output_preview"]
+
+    def test_empty_result_messages_gives_empty_preview(
+        self, workspace: WorkspaceManager, session_slug: str
+    ):
+        """When no result messages, output_preview should be empty string."""
+        result_messages: list[str] = []
+        workspace.append_agent_memory_entry(session_slug, "executor", {
+            "query": "test",
+            "skills_used": [],
+            "output_preview": (result_messages[-1][:200] if result_messages else ""),
+        })
+        mem = workspace.load_agent_memory(session_slug, "executor")
+        assert mem["entries"][0]["output_preview"] == ""
