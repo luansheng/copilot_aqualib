@@ -20,13 +20,14 @@ Creates and maintains the canonical directory layout:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, Union, overload
 
 from aqualib.config import Settings
 
@@ -41,6 +42,7 @@ class WorkspaceManager:
         self.dirs = settings.directories
         self._ensure_dirs()
         self._invocation_counter: int = 0
+        self._invocation_lock: asyncio.Lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Directory helpers
@@ -72,14 +74,15 @@ class WorkspaceManager:
         p.mkdir(parents=True, exist_ok=True)
         return p
 
-    def next_invocation_dir(self) -> Path:
+    async def next_invocation_dir(self) -> Path:
         """Create and return a new sequential invocation directory under work/.
 
         Used by the SDK tool adapter to provide an isolated scratch space for
-        each vendor skill call within the current session.
+        each vendor skill call within the current session. Thread-safe via asyncio.Lock.
         """
-        self._invocation_counter += 1
-        inv_dir = self.dirs.work / f"inv_{self._invocation_counter:04d}"
+        async with self._invocation_lock:
+            self._invocation_counter += 1
+            inv_dir = self.dirs.work / f"inv_{self._invocation_counter:04d}"
         inv_dir.mkdir(parents=True, exist_ok=True)
         return inv_dir
 
@@ -89,48 +92,38 @@ class WorkspaceManager:
 
     def save_vendor_trace(
         self,
-        task_id_or_skill_name: str,
+        task_id: str,
         invocation: "Any",
     ) -> Path:
-        """Write a standardised trace record for a vendor skill invocation.
-
-        Accepts two call signatures for backward compatibility:
-
-        * **Legacy** (registry-based pipeline):
-          ``save_vendor_trace(task_id: str, invocation: SkillInvocation)``
-        * **SDK** (Copilot SDK path) – use :meth:`save_sdk_vendor_trace` instead.
+        """Write a standardised trace record for a vendor skill invocation (legacy path).
 
         Every vendor execution gets a JSON file under
         ``results/vendor_traces/<task_id>_<invocation_id>.json``.
-        """
-        from aqualib.core.message import SkillInvocation
 
-        if isinstance(invocation, SkillInvocation):
-            trace_dir = self.dirs.vendor_traces
-            trace_dir.mkdir(parents=True, exist_ok=True)
-            task_id = task_id_or_skill_name
-            filename = f"{task_id}_{invocation.invocation_id}.json"
-            trace_path = trace_dir / filename
-            trace_data = {
-                "task_id": task_id,
-                "invocation_id": invocation.invocation_id,
-                "skill_name": invocation.skill_name,
-                "source": invocation.source.value,
-                "parameters": invocation.parameters,
-                "output": invocation.output,
-                "output_dir": invocation.output_dir,
-                "success": invocation.success,
-                "error": invocation.error,
-                "started_at": invocation.started_at.isoformat(),
-                "finished_at": invocation.finished_at.isoformat() if invocation.finished_at else None,
-                "recorded_at": datetime.now(timezone.utc).isoformat(),
-            }
-            trace_path.write_text(json.dumps(trace_data, indent=2))
-            logger.info("Vendor trace saved → %s", trace_path)
-            return trace_path
-        else:
-            # Fallback: treat second arg as a dict (SDK path shouldn't use this overload)
-            return self.save_sdk_vendor_trace(task_id_or_skill_name, invocation)
+        For the Copilot SDK path, use :meth:`save_sdk_vendor_trace` instead.
+        """
+
+        trace_dir = self.dirs.vendor_traces
+        trace_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"{task_id}_{invocation.invocation_id}.json"
+        trace_path = trace_dir / filename
+        trace_data = {
+            "task_id": task_id,
+            "invocation_id": invocation.invocation_id,
+            "skill_name": invocation.skill_name,
+            "source": invocation.source.value,
+            "parameters": invocation.parameters,
+            "output": invocation.output,
+            "output_dir": invocation.output_dir,
+            "success": invocation.success,
+            "error": invocation.error,
+            "started_at": invocation.started_at.isoformat(),
+            "finished_at": invocation.finished_at.isoformat() if invocation.finished_at else None,
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+        }
+        trace_path.write_text(json.dumps(trace_data, indent=2))
+        logger.info("Vendor trace saved → %s", trace_path)
+        return trace_path
 
     def save_sdk_vendor_trace(self, skill_name: str, trace: dict) -> Path:
         """Write a vendor trace dict produced by the SDK tool adapter.
@@ -274,6 +267,12 @@ class WorkspaceManager:
             f"Skills used: {', '.join(skill_parts) if skill_parts else 'none'}. "
             f"Last run: {last_date}."
         )
+
+    @overload
+    def update_project_after_task(self, task: "Any") -> None: ...
+
+    @overload
+    def update_project_after_task(self, task_or_query: str, messages: list | None = None) -> None: ...
 
     def update_project_after_task(
         self,

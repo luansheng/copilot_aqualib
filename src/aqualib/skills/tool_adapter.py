@@ -177,7 +177,7 @@ async def _run_vendor_skill(
 ) -> str:
     """Execute a vendor skill via subprocess and return the result as a string."""
     entry = _resolve_entry_point(meta)
-    output_dir = workspace.next_invocation_dir()
+    output_dir = await workspace.next_invocation_dir()
     input_file = output_dir / "input.json"
     output_file = output_dir / "output.json"
 
