@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from aqualib.config import Settings, get_settings
 from aqualib.core.executor import ExecutorAgent
@@ -12,7 +13,7 @@ from aqualib.core.searcher import SearcherAgent
 from aqualib.rag.indexer import RAGIndexer
 from aqualib.rag.retriever import Retriever
 from aqualib.skills.clawbio.skills import ALL_CLAWBIO_SKILLS
-from aqualib.skills.loader import mount_clawbio_skills
+from aqualib.skills.loader import mount_clawbio_skills, scan_clawbio_directory
 from aqualib.skills.registry import SkillRegistry
 from aqualib.workspace.manager import WorkspaceManager
 
@@ -24,17 +25,28 @@ def build_registry(settings: Settings) -> SkillRegistry:
 
     Registration order (Clawbio-first):
       1. Scan the Clawbio mount point (``skills/clawbio/``) for externally
-         provided skills – these are treated as a high-priority black box.
-      2. Register the bundled example Clawbio skills as a fallback so the
+         provided skills – highest priority (user customisation).
+      2. Scan the vendor directory (``vendor/ClawBio``) for repo-shipped skills.
+      3. Register the bundled example Clawbio skills as a fallback so the
          framework is usable out of the box.
     """
     registry = SkillRegistry(clawbio_priority=settings.clawbio_priority)
 
-    # 1. Dynamic mount-point scan
+    # 1. Dynamic mount-point scan (highest priority — user customisation)
     mounted = mount_clawbio_skills(settings.directories.skills_clawbio, registry)
     logger.info("Mounted %d Clawbio skill(s) from %s", mounted, settings.directories.skills_clawbio)
 
-    # 2. Bundled example skills (only register those not already present)
+    # 2. Vendor directory scan (repo-shipped ClawBio)
+    vendor_path = Path(__file__).resolve().parent.parent.parent / "vendor" / "ClawBio"
+    if vendor_path.is_dir():
+        vendor_mounted = 0
+        for skill in scan_clawbio_directory(vendor_path):
+            if registry.get(skill.meta.name) is None:
+                registry.register(skill)
+                vendor_mounted += 1
+        logger.info("Mounted %d vendor Clawbio skill(s) from %s", vendor_mounted, vendor_path)
+
+    # 3. Bundled example skills (lowest priority — only register those not already present)
     for cls in ALL_CLAWBIO_SKILLS:
         instance = cls()
         if registry.get(instance.meta.name) is None:
