@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from aqualib.config import DirectorySettings, RAGSettings, Settings
+from aqualib.config import DirectorySettings, LLMSettings, RAGSettings, Settings
 from aqualib.workspace.manager import WorkspaceManager
 
 
@@ -110,6 +110,24 @@ class TestIsRagAvailable:
 
         # settings_no_rag has empty api_keys by default
         result = _is_rag_available(settings_no_rag)
+        assert result is False
+
+    def test_returns_false_when_only_llm_api_key_set(self, tmp_path: Path):
+        """When rag.api_key is empty but llm.api_key is non-empty, should return False."""
+        from aqualib.skills.tool_adapter import _is_rag_available
+
+        try:
+            import llama_index.core  # noqa: F401
+        except ImportError:
+            pytest.skip("llama-index not installed")
+
+        dirs = DirectorySettings(base=tmp_path).resolve()
+        settings = Settings(
+            directories=dirs,
+            llm=LLMSettings(api_key="sk-openai-key"),
+            rag=RAGSettings(),  # rag.api_key defaults to ""
+        )
+        result = _is_rag_available(settings)
         assert result is False
 
     def test_silent_failure_no_exception(self, settings_no_rag: Settings):

@@ -170,16 +170,7 @@ def _make_post_tool_hook(workspace: "WorkspaceManager", session_slug: str | None
 
 def _make_session_end_hook(workspace: "WorkspaceManager", session_slug: str | None = None):
     async def on_session_end(input_data: dict[str, Any], invocation: Any) -> None:
-        """Flush and finalise the workspace state after the session ends.
-
-        Also appends a compact executor memory entry for this task.
-        """
-        if session_slug:
-            workspace.append_agent_memory_entry(session_slug, "executor", {
-                "query": input_data.get("query", ""),
-                "skills_used": input_data.get("skills_used", []),
-                "output_preview": str(input_data.get("summary", ""))[:200],
-            })
+        """Flush and finalise the workspace state after the session ends."""
         workspace.finalize_task()
         return None
 

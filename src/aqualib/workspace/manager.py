@@ -125,7 +125,7 @@ class WorkspaceManager:
         logger.info("Vendor trace saved → %s", trace_path)
         return trace_path
 
-    def save_sdk_vendor_trace(self, skill_name: str, trace: dict) -> Path:
+    def save_sdk_vendor_trace(self, skill_name: str, trace: dict, session_slug: str | None = None) -> Path:
         """Write a vendor trace dict produced by the SDK tool adapter.
 
         Used by the Copilot SDK integration layer (``sdk/tools.py``) where
@@ -145,6 +145,13 @@ class WorkspaceManager:
         }
         trace_path.write_text(json.dumps(trace_data, indent=2))
         logger.info("SDK vendor trace saved → %s", trace_path)
+
+        # Additionally write to session-specific directory if slug provided
+        if session_slug:
+            session_trace_dir = self.session_vendor_traces_dir(session_slug)
+            session_trace_path = session_trace_dir / filename
+            session_trace_path.write_text(json.dumps(trace_data, indent=2))
+
         return trace_path
 
     # Backward-compatible alias
@@ -605,7 +612,7 @@ class WorkspaceManager:
         self.save_agent_memory(slug, agent_name, memory)
 
     def update_session_after_task(
-        self, slug: str, query: str, messages: list
+        self, slug: str, query: str, messages: list, skills_used: list[str] | None = None
     ) -> None:
         """Update session.json counters and summary; also update global project.json."""
         session_meta = self.load_session(slug)
@@ -632,6 +639,6 @@ class WorkspaceManager:
             "task_id": uuid.uuid4().hex[:8],
             "query": query,
             "status": "completed",
-            "skills_used": [],
+            "skills_used": skills_used or [],
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })

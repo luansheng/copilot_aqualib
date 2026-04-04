@@ -236,6 +236,27 @@ class TestUpdateSessionAfterTask:
         entries = workspace.load_context_log()
         assert any(e.get("query") == "my query" for e in entries)
 
+    def test_skills_used_written_to_context_log(self, workspace: WorkspaceManager):
+        """Bug 5: skills_used parameter should be written to context_log."""
+        meta = workspace.create_session(name="test")
+        slug = meta["slug"]
+        workspace.update_session_after_task(
+            slug, "align sequences", ["done"],
+            skills_used=["vendor_seq_align", "vendor_drug_check"],
+        )
+        entries = workspace.load_context_log()
+        task_entry = next(e for e in entries if e.get("query") == "align sequences")
+        assert task_entry["skills_used"] == ["vendor_seq_align", "vendor_drug_check"]
+
+    def test_skills_used_defaults_to_empty_list(self, workspace: WorkspaceManager):
+        """Bug 5: when skills_used is not provided, defaults to empty list."""
+        meta = workspace.create_session(name="test")
+        slug = meta["slug"]
+        workspace.update_session_after_task(slug, "test query", [])
+        entries = workspace.load_context_log()
+        task_entry = next(e for e in entries if e.get("query") == "test query")
+        assert task_entry["skills_used"] == []
+
 
 # ---------------------------------------------------------------------------
 # Backward compatibility: old project without sessions/ directory
@@ -272,3 +293,115 @@ class TestBackwardCompat:
         meta = ws.create_session()
         assert ws.get_active_session() is not None
         assert ws.get_active_session()["slug"] == meta["slug"]
+
+
+# ---------------------------------------------------------------------------
+# Bug 4: save_sdk_vendor_trace writes to session-level directory
+# ---------------------------------------------------------------------------
+
+
+class TestVendorTraceSessionDir:
+    def test_writes_to_global_dir_without_session_slug(self, workspace: WorkspaceManager):
+        """Without session_slug, only writes to global vendor_traces/."""
+        trace_path = workspace.save_sdk_vendor_trace(
+            "seq_align", {"returncode": 0, "stdout": "ok", "stderr": ""}
+        )
+        assert trace_path.exists()
+        assert "vendor_traces" in str(trace_path)
+
+    def test_writes_to_both_dirs_with_session_slug(self, workspace: WorkspaceManager):
+        """With session_slug, writes to both global and session-level vendor_traces/."""
+        meta = workspace.create_session(name="test")
+        slug = meta["slug"]
+
+        trace_path = workspace.save_sdk_vendor_trace(
+            "seq_align",
+            {"returncode": 0, "stdout": "ok", "stderr": ""},
+            session_slug=slug,
+        )
+        # Global trace exists
+        assert trace_path.exists()
+
+        # Session-level trace also exists
+        session_traces = workspace.session_vendor_traces_dir(slug)
+        session_trace_files = list(session_traces.iterdir())
+        assert len(session_trace_files) == 1
+        assert session_trace_files[0].name == trace_path.name
+
+    def test_session_trace_has_same_content(self, workspace: WorkspaceManager):
+        """Session-level trace should have the same content as global trace."""
+        import json
+
+        meta = workspace.create_session(name="test")
+        slug = meta["slug"]
+
+        trace_path = workspace.save_sdk_vendor_trace(
+            "drug_check",
+            {"returncode": 0, "stdout": "result", "stderr": ""},
+            session_slug=slug,
+        )
+        global_data = json.loads(trace_path.read_text())
+
+        session_traces = workspace.session_vendor_traces_dir(slug)
+        session_trace_path = session_traces / trace_path.name
+        session_data = json.loads(session_trace_path.read_text())
+
+        assert global_data["skill_name"] == session_data["skill_name"]
+        assert global_data["stdout"] == session_data["stdout"]
+
+
+# ---------------------------------------------------------------------------
+# Bug 6: run command exits when project is not initialised
+# ---------------------------------------------------------------------------
+
+
+class TestRunExitsWithoutProject:
+    def test_run_exits_when_no_project(self, tmp_path: Path):
+        """aqualib run should exit with code 1 when no project.json exists."""
+        from typer.testing import CliRunner
+
+        from aqualib.cli import app
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["run", "test query", "--base-dir", str(tmp_path)])
+        assert result.exit_code == 1
+        assert "No project found" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Bug 3: status command shows session information
+# ---------------------------------------------------------------------------
+
+
+class TestStatusShowsSessions:
+    def test_status_displays_session_info(self, workspace: WorkspaceManager, tmp_path: Path):
+        """status command should show session count and active session."""
+        from typer.testing import CliRunner
+
+        from aqualib.cli import app
+
+        # Create sessions
+        workspace.create_session(name="alpha")
+        workspace.create_session(name="beta")
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["status", "--base-dir", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "Sessions:" in result.output
+        assert "2 total" in result.output
+
+    def test_status_shows_no_sessions_section_when_none(self, tmp_path: Path):
+        """When no sessions exist, Sessions line should not appear."""
+        from typer.testing import CliRunner
+
+        from aqualib.cli import app
+
+        dirs = DirectorySettings(base=tmp_path).resolve()
+        settings = Settings(directories=dirs)
+        ws = WorkspaceManager(settings)
+        ws.create_project(name="Empty Project")
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["status", "--base-dir", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "Sessions:" not in result.output

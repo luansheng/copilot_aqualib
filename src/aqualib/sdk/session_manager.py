@@ -106,7 +106,7 @@ class SessionManager:
             provider=self._build_provider(),
             skill_directories=self._collect_skill_dirs(),
             custom_agents=build_custom_agents(self.settings, self.workspace, slug),
-            tools=build_tools_from_skills(self.settings, self.workspace),
+            tools=build_tools_from_skills(self.settings, self.workspace, session_slug=slug),
             system_message=build_system_message(self.settings, self.workspace),
             hooks=build_hooks(self.settings, self.workspace, slug),
             on_permission_request=self._build_permission_handler(),
@@ -129,7 +129,7 @@ class SessionManager:
             session_id,
             on_permission_request=self._build_permission_handler(),
             provider=self._build_provider(),
-            tools=build_tools_from_skills(self.settings, self.workspace),
+            tools=build_tools_from_skills(self.settings, self.workspace, session_slug=slug),
             skill_directories=self._collect_skill_dirs(),
             custom_agents=build_custom_agents(self.settings, self.workspace, slug),
         )
