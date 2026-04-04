@@ -42,10 +42,43 @@ class Orchestrator:
         self.workspace = workspace
         self.max_retries = max_retries
 
+    def _build_project_context(self) -> str:
+        """Load project metadata and recent task history for agent context."""
+        meta = self.workspace.load_project()
+        if meta is None:
+            return ""
+
+        parts = [f"Project: {meta.get('name', 'unknown')}"]
+
+        summary = meta.get("summary", "")
+        if summary:
+            parts.append(f"History: {summary}")
+
+        # Include the last 5 context log entries for agent awareness
+        entries = self.workspace.load_context_log()
+        if entries:
+            recent = entries[-5:]
+            parts.append("Recent tasks:")
+            for e in recent:
+                status_icon = "✅" if e.get("status") == "approved" else "⚠️"
+                parts.append(
+                    f"  - {status_icon} \"{e.get('query', '')}\" → "
+                    f"{e.get('status', 'unknown')} "
+                    f"(skills: {', '.join(e.get('skills_used', []))})"
+                )
+
+        return "\n".join(parts)
+
     async def run(self, user_query: str) -> Task:
         """Execute the full pipeline and return the final Task."""
         task = Task(user_query=user_query)
         task.add_message(Role.USER, user_query)
+
+        # Inject project context if available
+        project_context = self._build_project_context()
+        if project_context:
+            task.add_message(Role.ORCHESTRATOR, f"Project context:\n{project_context}")
+
         task.add_message(Role.ORCHESTRATOR, "Pipeline started.")
 
         # Step 1: Search / RAG

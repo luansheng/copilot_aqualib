@@ -78,29 +78,122 @@ The RAG system automatically indexes all files in `data/` (supports `.txt`, `.md
 aqualib run "Align the protein sequences MVKLF and MVKLT"
 ```
 
-## Multi-Project Workflow
+## How AquaLib Manages State
 
-AquaLib follows a **one directory = one project** principle. Each project directory is fully self-contained and independent.
+### No server, no process, no "close"
 
-### Starting a new project
+AquaLib is a **stateless command-line tool**. Every `aqualib run` is an independent process: start → execute → exit. There is no background daemon, no database, no long-running server. All state is **plain files on disk**:
 
-```bash
-# Project A
-mkdir ~/project_A && cd ~/project_A
-aqualib init --name "CYP2D6 Drug Interactions"
-cp ~/datasets/cyp2d6.csv aqualib_workspace/data/
-aqualib run "What drugs interact with CYP2D6 poor metabolizers?"
-
-# Project B (completely separate)
-mkdir ~/project_B && cd ~/project_B
-aqualib init --name "BRCA1 Binding Study"
-cp ~/datasets/brca1.fasta aqualib_workspace/data/
-aqualib run "Predict binding affinity for BRCA1"
+```
+~/project_A/
+├── aqualib.yaml                  # Project-specific configuration
+└── aqualib_workspace/
+    ├── project.json              # Project metadata & summary
+    ├── context_log.jsonl         # Task history log
+    ├── data/                     # Your input data
+    ├── results/                  # Task outputs & audit reports
+    └── work/.rag_index/          # Persisted RAG vector index
 ```
 
-> No need to re-clone or re-install. The `aqualib` command is already in your PATH.
+Because everything is files, there is nothing to "close" or "shut down":
+
+| Scenario | Can you resume? | Why |
+|----------|----------------|-----|
+| Close the terminal | ✅ | Files are on disk |
+| Reboot the server | ✅ | Files are on disk |
+| Come back 6 months later | ✅ | Files are on disk |
+| Copy directory to another machine | ✅ | Files are on disk |
+
+> **Only caveat:** environment variables (e.g. `OPENAI_API_KEY`) are lost on reboot. Write your API keys in `aqualib.yaml` to avoid re-exporting every session.
+
+### Switching between projects = `cd`
+
+AquaLib resolves **all paths from your current working directory**. There is no "open project" or "close project" command. Simply `cd` into a directory and every `aqualib` command automatically uses that directory's `aqualib.yaml` and `aqualib_workspace/`:
+
+```bash
+cd ~/project_A && aqualib run "..."   # → uses ~/project_A/aqualib_workspace/
+cd ~/project_B && aqualib run "..."   # → uses ~/project_B/aqualib_workspace/
+cd ~/project_A && aqualib status      # → back to Project A, full history intact
+```
+
+### Per-project configuration
+
+Each project has its own `aqualib.yaml` in its directory. Different projects can use entirely different LLM providers, models, and RAG settings:
+
+```bash
+# Project A: GPT-4o for high-accuracy research
+~/project_A/aqualib.yaml → llm.model: gpt-4o
+
+# Project B: local Ollama for fast iteration
+~/project_B/aqualib.yaml → llm.base_url: http://localhost:11434/v1, llm.model: llama3
+```
+
+### Skill loading scope
+
+Skills are loaded from three tiers. **Tier 2 and 3 are global** (shared across all projects); **Tier 1 is per-project**:
+
+| Tier | Path | Per-project? | Description |
+|------|------|-------------|-------------|
+| **1 (highest)** | `aqualib_workspace/skills/vendor/` | ✅ Yes | Custom skills specific to this project |
+| **2** | `copilot_aqualib/vendor/ClawBio/` | ❌ Global | Vendor submodule, same for all projects |
+| **3 (lowest)** | Built-in `src/aqualib/skills/` | ❌ Global | Framework built-in placeholders |
+
+Most users never need per-project skills — all projects share the same skill library. Only customise Tier 1 if a specific project needs a specialised skill.
+
+## Multi-Project Workflow
+
+AquaLib follows a **one directory = one project** principle. Each project directory is fully self-contained with its own data, results, and history.
+
+### How project switching works
+
+AquaLib resolves the workspace based on your **current working directory** (`cwd`). When you run any `aqualib` command, it looks for `aqualib_workspace/` in `cwd`. No configuration or flags needed — just `cd` into the right directory.
+
+```bash
+cd ~/project_A
+aqualib run "..."     # uses ~/project_A/aqualib_workspace/
+
+cd ~/project_B
+aqualib run "..."     # uses ~/project_B/aqualib_workspace/
+```
+
+### Creating a new project
+
+```bash
+mkdir ~/project_A && cd ~/project_A
+aqualib init --name "CYP2D6 Drug Interactions" --description "Pharmacogenomics study"
+cp ~/datasets/cyp2d6.csv aqualib_workspace/data/
+aqualib run "What drugs interact with CYP2D6 poor metabolizers?"
+```
 
 ### Resuming an existing project
+
+Simply `cd` back into the project directory. All history, data, and results are preserved:
+
+```bash
+cd ~/project_A
+aqualib status                              # see full project history
+aqualib run "Find CYP2D6 inhibitors"       # agents are aware of previous tasks
+```
+
+When you run a new task in an existing project, the agents automatically receive:
+- **Project name** and accumulated summary
+- **Recent task history** (last 5 tasks with queries, results, and skills used)
+- **RAG context** from all files in `data/`
+
+This means the agents can build on previous work without you repeating context.
+
+Output when running in a resumed project:
+
+```
+📂 Project: CYP2D6 Drug Interactions (3 previous tasks)
+
+🐙 AquaLib Result
+  Task:    e5f6a7b8
+  Status:  approved ✅
+  ...
+```
+
+### Checking project status
 
 ```bash
 cd ~/project_A
@@ -123,18 +216,19 @@ Recent tasks:
   • [c9d0e1f2] "Predict metabolizer phenotype"         ⚠️ needs_revision
 ```
 
-Running `aqualib init` in an existing project directory is safe — it detects `project.json` and prints:
+### Running `aqualib init` in an existing project is safe
+
+It detects `project.json` and prints:
 
 ```
 📂 Existing project found: CYP2D6 Drug Interactions (created 2026-04-01, 3 tasks). Workspace is ready.
 ```
 
-### Running multiple tasks in the same project
+### Task isolation within a project
 
 Each `aqualib run` creates an isolated task directory. Multiple tasks within one project never conflict:
 
 ```bash
-cd ~/project_A
 aqualib run "Find CYP2D6 inhibitors"       # → results/a1b2c3d4/
 aqualib run "Predict drug-drug interactions" # → results/e5f6a7b8/ (separate)
 aqualib tasks                                # list all tasks in this project
@@ -149,8 +243,9 @@ Each skill invocation within a task also gets its own sub-directory (`results/<t
 |--------|---------|-----------|-------------|----------|
 | First time setup | `git clone` + `pip install` | — | — | — |
 | New project | `mkdir` + `cd` + `aqualib init` | ❌ | ❌ | ✅ |
-| New task in same project | `aqualib run "..."` | ❌ | ❌ | ❌ |
-| Resume existing project | `cd ~/project_X` + `aqualib status` | ❌ | ❌ | ❌ |
+| New task in same project | `cd ~/project` + `aqualib run "..."` | ❌ | ❌ | ❌ |
+| Switch to another project | `cd ~/other_project` | ❌ | ❌ | ❌ |
+| Resume existing project | `cd ~/project` + `aqualib status` or `aqualib run "..."` | ❌ | ❌ | ❌ |
 | Update framework | `cd copilot_aqualib && git pull` | ❌ | ❌\* | ❌ |
 
 > \* Re-install only needed if `pyproject.toml` dependencies changed.
@@ -204,6 +299,9 @@ aqualib run "Align the protein sequences MVKLF and MVKLT"
 
 # Skip RAG index build (faster for testing)
 aqualib run "What drugs interact with CYP2D6 poor metabolizers?" --skip-rag
+
+# Initialise a new project with a custom name and description
+aqualib init --name "My Research Project" --description "Protein binding study"
 
 # View completed tasks
 aqualib tasks
@@ -262,17 +360,46 @@ export AQUALIB_RAG_API_KEY="sk-openai-key"
 export AQUALIB_RAG_BASE_URL="https://api.openai.com/v1"
 ```
 
+Or configure the same in `aqualib.yaml`:
+
+```yaml
+# Example: Azure OpenAI for LLM, official OpenAI for embeddings
+llm:
+  api_key: "azure-key-here"
+  base_url: "https://my-resource.openai.azure.com/"
+  model: gpt-4o
+
+rag:
+  api_key: "sk-openai-key-here"
+  base_url: null
+  embed_model: text-embedding-3-small
+```
+
+```yaml
+# Example: local Ollama for LLM, OpenAI for embeddings
+llm:
+  api_key: "ollama"
+  base_url: "http://localhost:11434/v1"
+  model: llama3
+
+rag:
+  api_key: "sk-openai-key-here"
+  base_url: null
+  embed_model: text-embedding-3-small
+```
+
 ## Python API
 
 ```python
 import asyncio
 from aqualib.bootstrap import build_orchestrator
-from aqualib.config import Settings, DirectorySettings, LLMSettings
+from aqualib.config import Settings, DirectorySettings, LLMSettings, RAGSettings
 
 async def main():
     settings = Settings(
         directories=DirectorySettings(base="./my_workspace").resolve(),
         llm=LLMSettings(model="gpt-4o"),
+        rag=RAGSettings(embed_model="text-embedding-3-small"),
         vendor_priority=True,
     )
     orch = await build_orchestrator(settings, skip_rag_index=True)
