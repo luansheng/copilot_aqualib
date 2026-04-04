@@ -4,8 +4,8 @@ directories:
   work: work
   results: results
   data: data
-  skills_clawbio: skills/clawbio       # Mount point for external Clawbio library
-  clawbio_traces: results/clawbio_traces  # Clawbio invocation trace logs
+  skills_vendor: skills/vendor             # Mount point for external vendor skill libraries
+  vendor_traces: results/vendor_traces     # Vendor invocation trace logs
 
 # LLM configuration (OpenAI-compatible)
 llm:
@@ -22,7 +22,7 @@ rag:
   similarity_top_k: 5
   embed_model: text-embedding-3-small
 
-# Always prefer Clawbio skills over generic alternatives
-clawbio_priority: true
+# Always prefer vendor skills over generic alternatives
+vendor_priority: true
 
 verbose: false
