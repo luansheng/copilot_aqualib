@@ -108,8 +108,10 @@ class WorkspaceManager:
             try:
                 link_path.symlink_to(canonical_dir)
             except (OSError, NotImplementedError):
-                # Fall back silently on systems without symlink support
-                pass
+                # Symlinks not supported on this system; log and continue
+                logger.debug(
+                    "Symlink not supported; aggregated view at %s will be absent", link_path
+                )
 
             return canonical_dir
         else:
@@ -196,6 +198,9 @@ class WorkspaceManager:
                 link_path.symlink_to(canonical_path)
             except (OSError, NotImplementedError):
                 # Fall back to a copy on systems without symlink support
+                logger.debug(
+                    "Symlink not supported; writing copy at %s", link_path
+                )
                 link_path.write_text(serialized)
 
             return canonical_path
@@ -638,7 +643,8 @@ class WorkspaceManager:
         results are accessible under both the canonical session path and the
         aggregated ``results/`` tree for cross-session views.
 
-        On systems that don't support symlinks the method fails silently.
+        On systems that don't support symlinks the method logs a debug message
+        and skips creating the aggregated view.
         """
         session_results = self.session_results_dir(slug)
         results_slug_dir = self.dirs.results / slug
@@ -649,7 +655,9 @@ class WorkspaceManager:
                 try:
                     link.symlink_to(item)
                 except (OSError, NotImplementedError):
-                    pass  # Graceful fallback on systems without symlink support
+                    logger.debug(
+                        "Symlink not supported; aggregated result at %s will be absent", link
+                    )
 
     # ------------------------------------------------------------------
     # Agent (role) memory

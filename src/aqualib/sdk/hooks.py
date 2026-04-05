@@ -48,6 +48,10 @@ def _save_reviewer_memory(
     quality_match = re.search(r"PLAN_QUALITY\s*:\s*(.+?)(?:\n|$)", result_text, re.IGNORECASE)
     suggestions_match = re.search(r"SUGGESTIONS\s*:\s*(.+?)(?:\n\n|$)", result_text, re.IGNORECASE | re.DOTALL)
 
+    # Warn when the output doesn't match the expected reviewer format at all
+    if not verdict_match:
+        logger.warning("Reviewer memory: could not parse VERDICT from result text")
+
     entry: dict[str, Any] = {
         "verdict": verdict_match.group(1).strip() if verdict_match else "unknown",
         "vendor_priority": vendor_match.group(1).strip() if vendor_match else "unknown",
@@ -56,10 +60,11 @@ def _save_reviewer_memory(
         "violations": [],
     }
 
-    # Collect violations from vendor_priority and plan_quality fields
-    if "violated" in entry["vendor_priority"].lower():
+    # Collect violations: check that the field value *starts with* "violated"
+    # to avoid false positives from phrases like "not violated".
+    if re.match(r"violated", entry["vendor_priority"], re.IGNORECASE):
         entry["violations"].append(f"vendor_priority: {entry['vendor_priority']}")
-    if "violated" in entry["plan_quality"].lower():
+    if re.match(r"violated", entry["plan_quality"], re.IGNORECASE):
         entry["violations"].append(f"plan_quality: {entry['plan_quality']}")
 
     workspace.append_agent_memory_entry(session_slug, "reviewer", entry)
