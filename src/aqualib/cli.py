@@ -2,6 +2,7 @@
 
 Usage:
     aqualib run "Align these protein sequences"
+    aqualib chat
     aqualib skills
     aqualib tasks
     aqualib report <task_id>
@@ -241,6 +242,285 @@ def _extract_suggestions(content: str) -> list[str]:
         elif in_suggestions and line.strip() and not line.strip().startswith("-"):
             break
     return suggestions
+
+
+@app.command()
+def chat(
+    base_dir: str | None = typer.Option(None, "--base-dir", "-d", help="Workspace base directory."),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+    session: str | None = typer.Option(
+        None, "--session", "-s",
+        help="Resume a specific session by slug or prefix.",
+    ),
+    new_session: bool = typer.Option(False, "--new-session", help="Force creation of a new session."),
+    session_name: str | None = typer.Option(
+        None, "--session-name",
+        help="Name for the new session (only used with --new-session).",
+    ),
+) -> None:
+    """Interactive chat mode – multi-turn conversation with the AquaLib agent."""
+    settings = _get_settings(base_dir, verbose)
+
+    from aqualib.workspace.manager import WorkspaceManager
+
+    ws = WorkspaceManager(settings)
+
+    # Ensure project exists
+    project = ws.load_project()
+    if project is None:
+        rprint("[yellow]⚠️ No project found. Run 'aqualib init' first to set up your workspace.[/yellow]")
+        raise typer.Exit(1)
+
+    # Determine session slug
+    target_slug: str | None = None
+    if new_session:
+        meta = ws.create_session(name=session_name)
+        target_slug = meta["slug"]
+        rprint(f"[green]🆕 New session: {meta['name']} ({target_slug})[/green]")
+    elif session:
+        found = ws.find_session_by_prefix(session)
+        if found:
+            target_slug = found["slug"]
+            rprint(
+                f"[cyan]📂 Resuming session: {found['name']} "
+                f"({target_slug}, {found['task_count']} tasks)[/cyan]"
+            )
+        else:
+            rprint(f"[red]Session '{session}' not found.[/red]")
+            raise typer.Exit(1)
+    else:
+        active = ws.get_active_session()
+        if active:
+            target_slug = active["slug"]
+
+    async def _chat_loop() -> None:
+        from aqualib.sdk.client import AquaLibClient
+        from aqualib.sdk.session_manager import SessionManager
+        from aqualib.skills.scanner import scan_all_skill_dirs
+
+        aqua_client = AquaLibClient(settings)
+        client = await aqua_client.start()
+
+        try:
+            sm = SessionManager(client, settings, ws, session_slug=target_slug)
+            sdk_session, actual_slug = await sm.get_or_create_session()
+
+            session_meta = ws.find_session_by_prefix(actual_slug)
+            task_count = session_meta["task_count"] if session_meta else 0
+            project_name = (project or {}).get("name", "unknown")
+
+            # Welcome banner
+            rprint()
+            rprint("[bold cyan]🐙 AquaLib Chat[/bold cyan]")
+            rprint(f"[bold]📂 Project:[/bold] {project_name}")
+            rprint(f"[bold]🔗 Session:[/bold] {actual_slug} ({task_count} tasks)")
+            rprint()
+            rprint("[dim]Type your message, or use /help for commands.[/dim]")
+            rprint("[dim]Type 'exit' to quit.[/dim]")
+            rprint("[dim]─────────────────────────────────────────[/dim]")
+            rprint()
+
+            while True:
+                try:
+                    user_input = console.input("[bold]🧑 > [/bold]")
+                except (EOFError, KeyboardInterrupt):
+                    rprint()
+                    break
+
+                stripped = user_input.strip()
+                if not stripped:
+                    continue
+
+                # Exit commands
+                if stripped.lower() in ("exit", "quit", "/exit", "/quit"):
+                    break
+
+                # Slash commands
+                if stripped == "/help":
+                    _chat_print_help()
+                    continue
+                if stripped == "/status":
+                    _chat_print_status(ws)
+                    continue
+                if stripped == "/skills":
+                    _chat_print_skills(settings, ws, scan_all_skill_dirs)
+                    continue
+                if stripped == "/session":
+                    _chat_print_session(ws, actual_slug)
+                    continue
+                if stripped == "/history":
+                    _chat_print_history(ws, actual_slug)
+                    continue
+
+                # Send message to SDK
+                done = asyncio.Event()
+                result_messages: list[str] = []
+
+                def on_event(event: Any) -> None:
+                    event_type = getattr(event, "type", None)
+                    type_val = event_type.value if hasattr(event_type, "value") else str(event_type)
+                    data = getattr(event, "data", {})
+
+                    if type_val == "assistant.message":
+                        content = getattr(data, "content", "") or ""
+                        result_messages.append(content)
+                        if content:
+                            rprint(f"[green]{content}[/green]")
+                    elif type_val == "subagent.started":
+                        name = getattr(data, "agent_display_name", "agent")
+                        rprint(f"  [dim]▶ {name} started[/dim]")
+                    elif type_val == "subagent.completed":
+                        name = getattr(data, "agent_display_name", "agent")
+                        rprint(f"  [dim]✅ {name} completed[/dim]")
+                        # Write reviewer memory when reviewer completes
+                        agent_name = getattr(data, "agent_name", "")
+                        if agent_name == "reviewer":
+                            content = getattr(data, "content", "") or ""
+                            ws.append_agent_memory_entry(actual_slug, "reviewer", {
+                                "query": stripped,
+                                "verdict": _extract_verdict(content),
+                                "violations": _extract_violations(content),
+                                "suggestions": _extract_suggestions(content),
+                            })
+                    elif type_val == "session.idle":
+                        done.set()
+
+                sdk_session.on(on_event)
+                await sdk_session.send(stripped)
+                await done.wait()
+
+                # Post-turn bookkeeping (same as `run`)
+                recent_entries = ws.load_context_log()
+                task_skills: list[str] = []
+                found_prompt = False
+                for entry in reversed(recent_entries):
+                    if entry.get("event") == "user_prompt" and entry.get("query") == stripped:
+                        found_prompt = True
+                        break
+                    if entry.get("event") == "post_tool_use":
+                        tool_name = entry.get("tool", "")
+                        if tool_name.startswith("vendor_") and tool_name not in task_skills:
+                            task_skills.append(tool_name)
+                if not found_prompt:
+                    task_skills = []
+                task_skills.reverse()
+
+                ws.append_agent_memory_entry(actual_slug, "executor", {
+                    "query": stripped,
+                    "skills_used": task_skills,
+                    "output_preview": (result_messages[-1][:200] if result_messages else ""),
+                })
+
+                ws.update_session_after_task(actual_slug, stripped, result_messages, skills_used=task_skills)
+                rprint()
+
+        finally:
+            await aqua_client.stop()
+
+        rprint("[dim]👋 Chat ended. Session state saved.[/dim]")
+
+    try:
+        asyncio.run(_chat_loop())
+    except ImportError as exc:
+        rprint(f"[red]❌ {exc}[/red]")
+        raise typer.Exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Chat slash-command helpers
+# ---------------------------------------------------------------------------
+
+def _chat_print_help() -> None:
+    """Print the slash-command help table."""
+    rprint()
+    table = Table(title="Chat Commands", show_header=True)
+    table.add_column("Command", style="cyan")
+    table.add_column("Description")
+    table.add_row("/help", "Show this help message")
+    table.add_row("/status", "Show current project status")
+    table.add_row("/skills", "List all vendor skills")
+    table.add_row("/session", "Show current session info")
+    table.add_row("/history", "Show recent conversation history in this session")
+    table.add_row("exit / quit", "Exit the chat")
+    console.print(table)
+    rprint()
+
+
+def _chat_print_status(ws: Any) -> None:
+    """Inline project status display."""
+    from collections import Counter
+
+    meta = ws.load_project()
+    if meta is None:
+        rprint("[yellow]No project loaded.[/yellow]")
+        return
+
+    entries = ws.load_context_log()
+    status_counts: Counter[str] = Counter()
+    for entry in entries:
+        status_counts[entry.get("status", "unknown")] += 1
+
+    task_count = meta.get("task_count", 0)
+    status_parts = [f"{count} {s}" for s, count in status_counts.most_common()]
+    tasks_detail = f" ({', '.join(status_parts)})" if status_parts else ""
+
+    rprint()
+    rprint(f"[bold cyan]📂 Project:[/bold cyan] {meta.get('name', 'unknown')}")
+    rprint(f"   [bold]Created:[/bold]  {meta.get('created_at', 'unknown')[:10]}")
+    rprint(f"   [bold]Updated:[/bold]  {meta.get('updated_at', 'unknown')[:10]}")
+    rprint(f"   [bold]Tasks:[/bold]    {task_count}{tasks_detail}")
+    rprint()
+
+
+def _chat_print_skills(settings: Any, ws: Any, scan_fn: Any) -> None:
+    """List vendor skills."""
+    skill_metas = scan_fn(settings, ws)
+    if not skill_metas:
+        rprint("[dim]No vendor skills found.[/dim]")
+        return
+
+    table = Table(title="Vendor Skills")
+    table.add_column("Name", style="cyan")
+    table.add_column("Description")
+    table.add_column("Tags", style="dim")
+    for meta in skill_metas:
+        table.add_row(f"vendor_{meta.name}", meta.description[:80], ", ".join(meta.tags))
+    console.print(table)
+
+
+def _chat_print_session(ws: Any, slug: str) -> None:
+    """Show current session info."""
+    session_meta = ws.find_session_by_prefix(slug)
+    if session_meta is None:
+        rprint(f"[dim]Session {slug} not found.[/dim]")
+        return
+    rprint()
+    rprint(f"[bold]🔗 Session:[/bold] {session_meta['slug']}")
+    rprint(f"   [bold]Name:[/bold]       {session_meta.get('name', '')}")
+    rprint(f"   [bold]Tasks:[/bold]      {session_meta.get('task_count', 0)}")
+    rprint(f"   [bold]Created:[/bold]    {session_meta.get('created_at', '')[:16]}")
+    rprint(f"   [bold]Updated:[/bold]    {session_meta.get('updated_at', '')[:16]}")
+    rprint(f"   [bold]Status:[/bold]     {session_meta.get('status', 'active')}")
+    rprint()
+
+
+def _chat_print_history(ws: Any, slug: str) -> None:
+    """Show recent conversation entries for this session."""
+    entries = ws.load_context_log()
+    session_entries = [e for e in entries if e.get("session_slug") == slug]
+    recent = session_entries[-5:]
+    if not recent:
+        rprint("[dim]No history in this session yet.[/dim]")
+        return
+    rprint()
+    rprint("[bold]Recent history:[/bold]")
+    for entry in recent:
+        query = entry.get("query", "")[:60]
+        status = entry.get("status", "")
+        icon = "✅" if status == "approved" else "💬"
+        ts = entry.get("timestamp", "")[:16]
+        rprint(f"  {icon} [{ts}] {query}")
+    rprint()
 
 
 @app.command()
