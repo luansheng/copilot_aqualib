@@ -30,9 +30,7 @@ logger = logging.getLogger(__name__)
 # for hours; this timeout is a last-resort safeguard, not a task limit.
 _VENDOR_TIMEOUT_SECONDS = 43200  # 12 hours
 
-_MAX_SKILL_RETRIES = 4  # Maximum retry attempts for vendor skill execution
 _MAX_DOC_LENGTH = 8000  # Maximum characters returned by doc-reading tools
-_RETRY_ERROR_PREVIEW_LENGTH = 300  # Characters of error message kept in retry history
 
 # Module-level cache for RAGIndexer instances, keyed by index path.
 # Avoids rebuilding/deserializing the vector index on every rag_search call.
@@ -47,9 +45,21 @@ try:
     from pydantic import Field as PydanticField
 
     class VendorSkillParams(BaseModel):
+        command: str = PydanticField(
+            default="",
+            description=(
+                "Full shell command to execute. Construct this after reading "
+                "read_library_doc and read_skill_doc. "
+                "Example: 'python clawbio.py run --input /path/to/data.csv "
+                "--output /path/to/results.json --trait-pos 3'"
+            ),
+        )
         parameters: dict = PydanticField(
             default_factory=dict,
-            description="Parameters to pass to the vendor skill CLI",
+            description=(
+                "[DEPRECATED] Legacy parameter dict. Use 'command' field instead. "
+                "Only used when 'command' is empty."
+            ),
         )
 
     class SearchParams(BaseModel):
@@ -139,10 +149,19 @@ def _create_vendor_tool(meta: "SkillMeta", workspace: "WorkspaceManager", sessio
 
         @define_tool(
             name=f"vendor_{meta.name}",
-            description=f"[VENDOR] {meta.description}. Tags: {', '.join(meta.tags)}",
+            description=(
+                f"[VENDOR] {meta.description}. Tags: {', '.join(meta.tags)}. "
+                f"IMPORTANT: First call read_library_doc then read_skill_doc to learn the exact "
+                f"CLI syntax, then set 'command' to the full shell command string."
+            ),
         )
         async def vendor_skill_tool(params: VendorSkillParams) -> str:
-            return await _run_vendor_skill_with_retry(meta, workspace, params.parameters, session_slug=session_slug)
+            return await _run_vendor_skill_with_retry(
+                meta, workspace,
+                command=params.command,
+                parameters=params.parameters if not params.command else None,
+                session_slug=session_slug,
+            )
 
         return vendor_skill_tool
 
@@ -150,13 +169,19 @@ def _create_vendor_tool(meta: "SkillMeta", workspace: "WorkspaceManager", sessio
         # Fallback for environments without the SDK (e.g. test runs without the package).
         # Default arguments capture loop variables at definition time, avoiding late binding.
         async def _stub_vendor_fn(params, _meta=meta, _ws=workspace, _slug=session_slug):
+            cmd = params.get("command", "")
+            legacy_params = params.get("parameters") if not cmd else None
             return await _run_vendor_skill_with_retry(
-                _meta, _ws, params.get("parameters", {}),
+                _meta, _ws, command=cmd, parameters=legacy_params,
                 session_slug=_slug,
             )
         return _make_stub_tool(
             name=f"vendor_{meta.name}",
-            description=f"[VENDOR] {meta.description}. Tags: {', '.join(meta.tags)}",
+            description=(
+                f"[VENDOR] {meta.description}. Tags: {', '.join(meta.tags)}. "
+                f"IMPORTANT: First call read_library_doc then read_skill_doc to learn the exact "
+                f"CLI syntax, then set 'command' to the full shell command string."
+            ),
             fn=_stub_vendor_fn,
         )
 
@@ -237,10 +262,12 @@ def _create_read_library_doc_tool() -> Any:
         @define_tool(
             name="read_library_doc",
             description=(
-                "Read the top-level documentation of a vendor skill library "
-                "(AGENTS.md, README.md, catalog.json, llms.txt). Use this FIRST to "
-                "understand the library's architecture, CLI commands, and skill map "
-                "BEFORE reading individual SKILL.md files."
+                "Read top-level documentation of a vendor skill library. "
+                "When doc_type='all' (default), reads ALL .md and .txt files in the "
+                "library root (AGENTS.md, CLAUDE.md, README.md, llms.txt, etc.) plus "
+                "skills/catalog.json. Use this FIRST to understand the library's "
+                "architecture, CLI commands, and skill map BEFORE reading individual "
+                "SKILL.md files."
             ),
             skip_permission=True,
         )
@@ -282,13 +309,15 @@ def _read_library_documentation(library_name: str, doc_type: str) -> str:
             return f"Document '{doc_type}' not found for library '{library_name}'."
         return doc_path.read_text(encoding="utf-8")[:_MAX_DOC_LENGTH]
 
-    # doc_type == "all": concatenate in order, truncate total to _MAX_DOC_LENGTH chars
+    # doc_type == "all": scan all .md/.txt files in root + skills/catalog.json
     parts: list[str] = []
-    order = ["llms_txt", "agents_md", "readme", "catalog"]
-    for key in order:
-        path = _DOC_FILES[key]
-        if path.exists():
-            parts.append(f"# {path.name}\n\n{path.read_text(encoding='utf-8')}")
+    for f in sorted(lib_dir.iterdir()):
+        if f.is_file() and f.suffix in (".md", ".txt"):
+            parts.append(f"# {f.name}\n\n{f.read_text(encoding='utf-8')}")
+    # Also include skills/catalog.json if present
+    catalog = lib_dir / "skills" / "catalog.json"
+    if catalog.exists():
+        parts.append(f"# catalog.json\n\n{catalog.read_text(encoding='utf-8')}")
 
     combined = "\n\n".join(parts)
     return combined[:_MAX_DOC_LENGTH]
@@ -354,135 +383,91 @@ def _write_plan_to_session(
 async def _run_vendor_skill_with_retry(
     meta: "SkillMeta",
     workspace: "WorkspaceManager",
-    parameters: dict,
+    command: str = "",
+    parameters: dict | None = None,
     session_slug: str | None = None,
 ) -> str:
-    """Execute a vendor skill with up to _MAX_SKILL_RETRIES attempts.
+    """Execute a vendor skill once and return the result.
 
-    On each failure:
-    1. Log the error to audit trail
-    2. Analyse the error type (parameter error vs runtime crash vs timeout)
-    3. If retries remain, log the analysis and retry with potentially fixed parameters
-    4. After all retries exhausted, return a user-facing failure summary
-
-    This handles the case where subprocess returns non-zero exit code
-    (which returns an ERROR string rather than raising an exception,
-    so SDK's on_error_occurred hook does NOT trigger).
+    On failure, returns the ERROR string immediately so the SDK's
+    on_error_occurred hook can handle retries with rethink hints,
+    prompting the model to re-read docs and construct a different command.
+    This avoids the "N retries × N retries" multiplication problem.
     """
-    attempt_errors: list[str] = []
-    current_params = dict(parameters)
+    result = await _run_vendor_skill(
+        meta, workspace,
+        command=command,
+        parameters=parameters,
+        session_slug=session_slug,
+    )
 
-    for attempt in range(1, _MAX_SKILL_RETRIES + 1):
-        result = await _run_vendor_skill(meta, workspace, current_params, session_slug=session_slug)
-
-        # Success — no ERROR prefix
-        if not result.startswith("ERROR:"):
-            if attempt > 1:
-                logger.info(
-                    "Skill '%s' succeeded on attempt %d/%d",
-                    meta.name, attempt, _MAX_SKILL_RETRIES,
-                )
-            return result
-
-        # Failed — record this attempt
-        attempt_errors.append(f"Attempt {attempt}: {result[:_RETRY_ERROR_PREVIEW_LENGTH]}")
-
+    if result.startswith("ERROR:"):
+        logger.warning("Skill '%s' failed: %s", meta.name, result[:200])
         workspace.append_audit_entry({
-            "event": "skill_retry",
+            "event": "skill_error",
             "skill": meta.name,
-            "attempt": attempt,
-            "max_attempts": _MAX_SKILL_RETRIES,
             "error_preview": result[:500],
             "session_slug": session_slug,
         })
 
-        logger.warning(
-            "Skill '%s' failed attempt %d/%d: %s",
-            meta.name, attempt, _MAX_SKILL_RETRIES, result[:200],
-        )
-
-        if attempt < _MAX_SKILL_RETRIES:
-            error_hint = _analyse_skill_error(result, meta.name, current_params)
-            logger.info("Skill '%s' retry hint: %s", meta.name, error_hint[:200])
-            current_params = _maybe_fix_parameters(current_params, result)
-            await asyncio.sleep(min(attempt * 2, 10))
-
-    # All retries exhausted
-    failure_summary = (
-        f"⚠️ SKILL EXECUTION FAILED after {_MAX_SKILL_RETRIES} attempts.\n\n"
-        f"Skill: vendor_{meta.name}\n"
-        f"Parameters used: {json.dumps(parameters, indent=2)[:500]}\n\n"
-        f"Error history:\n"
-        + "\n".join(f"  • {e}" for e in attempt_errors)
-        + "\n\n"
-        f"INSTRUCTION: Report this failure to the user. "
-        f"Do NOT fabricate results. Suggest the user check:\n"
-        f"  1. Input file paths and formats\n"
-        f"  2. Required dependencies for '{meta.name}'\n"
-        f"  3. Parameter schema via `read_skill_doc(skill_name='{meta.name}')`"
-    )
-    return failure_summary
-
-
-def _analyse_skill_error(error_result: str, skill_name: str, parameters: dict) -> str:
-    """Classify the error and generate a fix hint."""
-    error_lower = error_result.lower()
-    if "no such file" in error_lower or "filenotfound" in error_lower or "not found" in error_lower:
-        return "FILE_NOT_FOUND: Input files missing. Use workspace_search to locate correct paths."
-    if "permission denied" in error_lower:
-        return "PERMISSION_DENIED: Check file permissions or try a different output path."
-    if "invalid" in error_lower and ("param" in error_lower or "arg" in error_lower):
-        return f"INVALID_PARAMETERS: Re-read SKILL.md via read_skill_doc(skill_name='{skill_name}')."
-    if "import" in error_lower or "module" in error_lower:
-        return "MISSING_DEPENDENCY: A required Python package is not installed."
-    if "timeout" in error_lower:
-        return "TIMEOUT: Try with smaller input data."
-    if "memory" in error_lower or "killed" in error_lower:
-        return "OUT_OF_MEMORY: Try with a smaller dataset."
-    return f"UNKNOWN_ERROR: Skill '{skill_name}' failed. Verify parameters match the schema."
-
-
-def _maybe_fix_parameters(parameters: dict, error_result: str) -> dict:
-    """Attempt automatic parameter fixes based on common error patterns.
-    Returns a (possibly modified) copy of parameters.
-    """
-    fixed = dict(parameters)
-    error_lower = error_result.lower()
-    if "no such file" in error_lower or "not found" in error_lower:
-        if "demo" not in fixed and "input" not in fixed:
-            fixed["demo"] = True
-            logger.info("Auto-fix: added demo=True due to missing input files")
-    return fixed
+    return result
 
 
 async def _run_vendor_skill(
     meta: "SkillMeta",
     workspace: "WorkspaceManager",
-    parameters: dict,
+    command: str = "",
+    parameters: dict | None = None,
     session_slug: str | None = None,
 ) -> str:
-    """Execute a vendor skill via subprocess and return the result as a string."""
-    entry = _resolve_entry_point(meta)
+    """Execute a vendor skill via subprocess and return the result as a string.
+
+    If ``command`` is provided, execute it directly via shell with
+    ``cwd=meta.vendor_root`` — the model constructs this after reading docs.
+
+    If ``command`` is empty, fall back to the legacy hardcoded argparse-style
+    invocation using ``parameters`` (deprecated — a warning is logged).
+    """
     output_dir = await workspace.next_invocation_dir(session_slug=session_slug)
-    input_file = output_dir / "input.json"
-    output_file = output_dir / "output.json"
+    legacy_output_file: "Path | None" = None
 
-    input_file.write_text(json.dumps(parameters, indent=2))
+    if command:
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(meta.vendor_root),
+            start_new_session=True,
+        )
+    else:
+        logger.warning(
+            "DEPRECATED: Vendor skill '%s' invoked without 'command' field. "
+            "Read docs via read_library_doc/read_skill_doc and use 'command' "
+            "for model-driven CLI construction.",
+            meta.name,
+        )
+        if parameters is None:
+            parameters = {}
+        entry = _resolve_entry_point(meta)
+        input_file = output_dir / "input.json"
+        legacy_output_file = output_dir / "output.json"
+        input_file.write_text(json.dumps(parameters, indent=2))
 
-    proc = await asyncio.create_subprocess_exec(
-        "python",
-        str(entry),
-        "run",
-        str(input_file),
-        "--output",
-        str(output_file),
-        "--skill",
-        meta.name,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        cwd=str(meta.vendor_root),
-        start_new_session=True,
-    )
+        proc = await asyncio.create_subprocess_exec(
+            "python",
+            str(entry),
+            "run",
+            str(input_file),
+            "--output",
+            str(legacy_output_file),
+            "--skill",
+            meta.name,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(meta.vendor_root),
+            start_new_session=True,
+        )
+
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=_VENDOR_TIMEOUT_SECONDS)
     except asyncio.TimeoutError:
@@ -517,8 +502,8 @@ async def _run_vendor_skill(
             f"{stderr.decode(errors='replace')[:500]}"
         )
 
-    if output_file.exists():
-        return output_file.read_text(encoding="utf-8")[:4000]
+    if legacy_output_file is not None and legacy_output_file.exists():
+        return legacy_output_file.read_text(encoding="utf-8")[:4000]
     return stdout.decode(errors="replace")[:4000]
 
 

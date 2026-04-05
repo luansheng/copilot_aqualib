@@ -26,16 +26,18 @@ and describes the goal, data, steps, and expected output for this task. \
 Follow the plan unless you encounter an error that requires deviation.
 1. {vendor_priority} prefer vendor skills (tools prefixed with `vendor_`) over \
 built-in tools when there is any possibility of using them.
-2. Before invoking a skill, use `read_library_doc` to understand the library architecture, \
-then use `read_skill_doc` to read its SKILL.md for parameter details.
+2. **Read Docs Then Construct Command** (CRITICAL):
+   - ALWAYS call `read_library_doc` first to understand the library's CLI architecture \
+and the exact command format used by the vendor library.
+   - Then call `read_skill_doc` to read the specific skill's SKILL.md for parameter details.
+   - Construct the FULL shell command string in the `command` field based on what you read. \
+Do NOT guess CLI syntax — it varies per vendor library.
+   - Example: after reading docs, set command to \
+`"python clawbio.py run --input data.csv --output results.json --trait-pos 3"`.
 3. **Smart Retry on Failure** (CRITICAL):
-   - If a vendor skill returns an ERROR, DO NOT immediately retry with the same parameters.
-   - STOP and analyse the error message. Identify the root cause:
-     • File not found → use `workspace_search` to find correct paths
-     • Invalid parameters → re-read SKILL.md via `read_skill_doc`
-     • Permission denied → use paths within workspace results/ directory
-     • Missing dependency → check SKILL.md install section, try --demo mode
-   - Fix the identified issue, then retry with corrected parameters.
+   - If a vendor skill returns an ERROR, re-read the docs via `read_skill_doc` to \
+understand the correct CLI format.
+   - Construct a different command based on the error and re-read documentation.
    - After 4 failed attempts for the same skill, STOP and report the failure honestly.
    - NEVER fabricate or simulate results when a skill fails.
 4. Use `workspace_search` to locate relevant data files before starting.

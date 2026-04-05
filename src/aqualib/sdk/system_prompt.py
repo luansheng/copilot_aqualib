@@ -34,10 +34,12 @@ entirely and answer directly.
 2. **Vendor Priority**: {vendor_priority} prefer vendor tools (prefixed `vendor_`) over \
 built-in tools when there is any possibility of using them.
 
-3. **Progressive Disclosure**:
+3. **Progressive Disclosure** (with command construction):
    - FIRST use `read_library_doc` to read the skill library's top-level docs \
 (AGENTS.md, catalog.json) to understand the full architecture and CLI commands
    - THEN use `read_skill_doc` to read specific SKILL.md before invoking a vendor skill
+   - Construct the FULL shell command in the `command` field based on what you read \
+from the documentation — do NOT guess the CLI syntax
    - Use `workspace_search` to locate relevant data files before starting
 
 4. **Executor → Reviewer Pipeline**:
