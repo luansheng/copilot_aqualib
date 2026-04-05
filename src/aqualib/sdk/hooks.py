@@ -169,7 +169,8 @@ def _make_pre_tool_hook(
             entry["session_slug"] = session_slug
         workspace.append_audit_entry(entry)
 
-        # Doc-first gate: block vendor tool calls until docs have been read
+        # Doc-first gate: block vendor tool calls until docs have been read.
+        # `not doc_tools_called` is True when the set is empty (no docs read yet).
         if tool_name.startswith("vendor_") and not doc_tools_called:
             return {
                 "permissionDecision": "block",
