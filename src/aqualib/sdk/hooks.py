@@ -37,11 +37,16 @@ def build_hooks(
     session_slug: str | None = None,
 ) -> dict:
     """Build and return the complete hook dict for a Copilot SDK session."""
+    # Shared state: tracks which doc tools the model has called this session.
+    # Used by the doc-first gate to enforce read_library_doc/read_skill_doc
+    # before any vendor_* tool invocation.
+    _doc_tools_called: set[str] = set()
+
     return {
         "on_session_start": _make_session_start_hook(workspace),
         "on_user_prompt_submitted": _make_prompt_hook(workspace, session_slug),
-        "on_pre_tool_use": _make_pre_tool_hook(settings, workspace, session_slug),
-        "on_post_tool_use": _make_post_tool_hook(workspace, session_slug),
+        "on_pre_tool_use": _make_pre_tool_hook(settings, workspace, session_slug, _doc_tools_called),
+        "on_post_tool_use": _make_post_tool_hook(workspace, session_slug, _doc_tools_called),
         "on_session_end": _make_session_end_hook(workspace, session_slug),
         "on_error_occurred": _make_error_hook(workspace, session_slug),
     }
@@ -133,11 +138,22 @@ def _make_prompt_hook(workspace: "WorkspaceManager", session_slug: str | None = 
     return on_user_prompt_submitted
 
 
-def _make_pre_tool_hook(settings: "Settings", workspace: "WorkspaceManager", session_slug: str | None = None):
+def _make_pre_tool_hook(
+    settings: "Settings",
+    workspace: "WorkspaceManager",
+    session_slug: str | None = None,
+    doc_tools_called: "set[str] | None" = None,
+):
+    if doc_tools_called is None:
+        doc_tools_called = set()
+
     async def on_pre_tool_use(
         input_data: dict[str, Any], invocation: Any
     ) -> dict[str, Any]:
-        """Vendor priority check + pre-execution audit record.
+        """Doc-first gate + vendor priority check + pre-execution audit record.
+
+        If a vendor_* tool is invoked before any documentation has been read
+        in this session, block the call and instruct the model to read docs first.
 
         If vendor skills are available but the agent chose a built-in tool,
         return an ``additionalContext`` reminder to steer the agent back.
@@ -152,6 +168,19 @@ def _make_pre_tool_hook(settings: "Settings", workspace: "WorkspaceManager", ses
         if session_slug:
             entry["session_slug"] = session_slug
         workspace.append_audit_entry(entry)
+
+        # Doc-first gate: block vendor tool calls until docs have been read
+        if tool_name.startswith("vendor_") and not doc_tools_called:
+            return {
+                "permissionDecision": "block",
+                "additionalContext": (
+                    "⛔ DOC-FIRST GATE: You must read documentation before invoking vendor tools. "
+                    "Call read_library_doc first to understand the library's CLI format and "
+                    "architecture, then read_skill_doc for the specific skill parameters. "
+                    "Then retry the vendor tool call with the 'command' field set to the full "
+                    "shell command string."
+                ),
+            }
 
         # Vendor priority reminder
         if settings.vendor_priority and not tool_name.startswith("vendor_"):
@@ -174,12 +203,29 @@ def _make_pre_tool_hook(settings: "Settings", workspace: "WorkspaceManager", ses
     return on_pre_tool_use
 
 
-def _make_post_tool_hook(workspace: "WorkspaceManager", session_slug: str | None = None):
+def _make_post_tool_hook(
+    workspace: "WorkspaceManager",
+    session_slug: str | None = None,
+    doc_tools_called: "set[str] | None" = None,
+):
+    if doc_tools_called is None:
+        doc_tools_called = set()
+
     async def on_post_tool_use(input_data: dict[str, Any], invocation: Any) -> None:
-        """Record tool execution result to the audit trail."""
+        """Record tool execution result to the audit trail.
+
+        Also tracks when read_skill_doc or read_library_doc are called so the
+        doc-first gate in on_pre_tool_use can allow vendor tool invocations.
+        """
+        tool_name = input_data.get("toolName", "")
+
+        # Track documentation reads for the doc-first gate
+        if tool_name in ("read_skill_doc", "read_library_doc"):
+            doc_tools_called.add(tool_name)
+
         entry: dict[str, Any] = {
             "event": "post_tool_use",
-            "tool": input_data.get("toolName", ""),
+            "tool": tool_name,
             "success": not input_data.get("toolError"),
             "result_preview": str(input_data.get("toolResult", ""))[:300],
         }

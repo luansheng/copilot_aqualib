@@ -46,6 +46,26 @@ def test_build_hooks_returns_all_six(workspace, settings):
         assert callable(hook_fn), f"Hook '{name}' should be callable"
 
 
+@pytest.mark.asyncio
+async def test_build_hooks_doc_first_gate_unlocked_by_post_hook(workspace, settings):
+    """Integration: post hook reading a doc tool unlocks the pre hook's gate."""
+    from aqualib.sdk.hooks import build_hooks
+
+    hooks = build_hooks(settings, workspace)
+    pre_hook = hooks["on_pre_tool_use"]
+    post_hook = hooks["on_post_tool_use"]
+
+    # Gate is closed initially
+    result = await pre_hook({"toolName": "vendor_seq_align", "toolArgs": {}}, None)
+    assert result["permissionDecision"] == "block"
+
+    # After reading docs, gate opens
+    await post_hook({"toolName": "read_library_doc", "toolResult": "..."}, None)
+
+    result = await pre_hook({"toolName": "vendor_seq_align", "toolArgs": {}}, None)
+    assert result["permissionDecision"] == "allow"
+
+
 # ---------------------------------------------------------------------------
 # on_session_start
 # ---------------------------------------------------------------------------
@@ -186,8 +206,8 @@ class TestPreToolHook:
         assert "additionalContext" not in result
 
     @pytest.mark.asyncio
-    async def test_no_reminder_when_vendor_tool_used(self, workspace, settings):
-        settings.vendor_priority = True
+    async def test_doc_first_gate_blocks_vendor_without_docs(self, workspace, settings):
+        """Vendor tool invocation before reading any docs should be blocked."""
         from aqualib.sdk.hooks import _make_pre_tool_hook
 
         hook = _make_pre_tool_hook(settings, workspace)
@@ -199,7 +219,44 @@ class TestPreToolHook:
             },
             None,
         )
-        assert "additionalContext" not in result
+        assert result["permissionDecision"] == "block"
+        assert "DOC-FIRST GATE" in result.get("additionalContext", "")
+
+    @pytest.mark.asyncio
+    async def test_vendor_tool_allowed_after_docs_read(self, workspace, settings):
+        """Vendor tool invocation is allowed once docs have been read."""
+        from aqualib.sdk.hooks import _make_pre_tool_hook
+
+        doc_tools_called: set = {"read_library_doc"}
+        hook = _make_pre_tool_hook(settings, workspace, doc_tools_called=doc_tools_called)
+        result = await hook(
+            {
+                "toolName": "vendor_seq_align",
+                "toolArgs": {},
+                "availableTools": ["grep", "vendor_seq_align"],
+            },
+            None,
+        )
+        assert result["permissionDecision"] == "allow"
+        assert "DOC-FIRST GATE" not in result.get("additionalContext", "")
+
+    @pytest.mark.asyncio
+    async def test_no_reminder_when_vendor_tool_used(self, workspace, settings):
+        settings.vendor_priority = True
+        from aqualib.sdk.hooks import _make_pre_tool_hook
+
+        # Simulate having already called a doc tool so the gate is open
+        doc_tools_called: set = {"read_library_doc"}
+        hook = _make_pre_tool_hook(settings, workspace, doc_tools_called=doc_tools_called)
+        result = await hook(
+            {
+                "toolName": "vendor_seq_align",
+                "toolArgs": {},
+                "availableTools": ["grep", "vendor_seq_align"],
+            },
+            None,
+        )
+        assert "VENDOR PRIORITY REMINDER" not in result.get("additionalContext", "")
 
     @pytest.mark.asyncio
     async def test_records_audit_entry(self, workspace, settings):
@@ -248,6 +305,36 @@ class TestPostToolHook:
         hook = _make_post_tool_hook(workspace)
         result = await hook({"toolName": "grep"}, None)
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_tracks_read_skill_doc_in_shared_set(self, workspace):
+        """Post hook records read_skill_doc in doc_tools_called set."""
+        from aqualib.sdk.hooks import _make_post_tool_hook
+
+        doc_tools_called: set = set()
+        hook = _make_post_tool_hook(workspace, doc_tools_called=doc_tools_called)
+        await hook({"toolName": "read_skill_doc", "toolResult": "..."}, None)
+        assert "read_skill_doc" in doc_tools_called
+
+    @pytest.mark.asyncio
+    async def test_tracks_read_library_doc_in_shared_set(self, workspace):
+        """Post hook records read_library_doc in doc_tools_called set."""
+        from aqualib.sdk.hooks import _make_post_tool_hook
+
+        doc_tools_called: set = set()
+        hook = _make_post_tool_hook(workspace, doc_tools_called=doc_tools_called)
+        await hook({"toolName": "read_library_doc", "toolResult": "..."}, None)
+        assert "read_library_doc" in doc_tools_called
+
+    @pytest.mark.asyncio
+    async def test_non_doc_tool_not_tracked(self, workspace):
+        """Post hook does NOT track non-doc tools in doc_tools_called set."""
+        from aqualib.sdk.hooks import _make_post_tool_hook
+
+        doc_tools_called: set = set()
+        hook = _make_post_tool_hook(workspace, doc_tools_called=doc_tools_called)
+        await hook({"toolName": "grep", "toolResult": "match"}, None)
+        assert not doc_tools_called
 
 
 # ---------------------------------------------------------------------------

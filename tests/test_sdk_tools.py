@@ -213,6 +213,38 @@ class TestReadSkillDocTool:
 
 
 # ---------------------------------------------------------------------------
+# VendorSkillParams - command field
+# ---------------------------------------------------------------------------
+
+
+class TestVendorSkillParams:
+    def test_command_field_exists(self):
+        from aqualib.skills.tool_adapter import VendorSkillParams
+
+        if VendorSkillParams is None:
+            pytest.skip("Pydantic not available")
+        params = VendorSkillParams(command="python clawbio.py run --input data.csv")
+        assert params.command == "python clawbio.py run --input data.csv"
+
+    def test_command_defaults_to_empty_string(self):
+        from aqualib.skills.tool_adapter import VendorSkillParams
+
+        if VendorSkillParams is None:
+            pytest.skip("Pydantic not available")
+        params = VendorSkillParams()
+        assert params.command == ""
+
+    def test_parameters_field_still_present_for_legacy(self):
+        from aqualib.skills.tool_adapter import VendorSkillParams
+
+        if VendorSkillParams is None:
+            pytest.skip("Pydantic not available")
+        params = VendorSkillParams(parameters={"key": "value"})
+        assert params.parameters == {"key": "value"}
+        assert params.command == ""
+
+
+# ---------------------------------------------------------------------------
 # scan_all_skill_dirs integration
 # ---------------------------------------------------------------------------
 
