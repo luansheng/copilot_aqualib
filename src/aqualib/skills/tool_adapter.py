@@ -31,6 +31,8 @@ logger = logging.getLogger(__name__)
 _VENDOR_TIMEOUT_SECONDS = 43200  # 12 hours
 
 _MAX_SKILL_RETRIES = 4  # Maximum retry attempts for vendor skill execution
+_MAX_DOC_LENGTH = 8000  # Maximum characters returned by doc-reading tools
+_RETRY_ERROR_PREVIEW_LENGTH = 300  # Characters of error message kept in retry history
 
 # Module-level cache for RAGIndexer instances, keyed by index path.
 # Avoids rebuilding/deserializing the vector index on every rag_search call.
@@ -278,9 +280,9 @@ def _read_library_documentation(library_name: str, doc_type: str) -> str:
             return f"Unknown doc_type '{doc_type}'. Choose from: agents_md, readme, catalog, llms_txt, all."
         if not doc_path.exists():
             return f"Document '{doc_type}' not found for library '{library_name}'."
-        return doc_path.read_text(encoding="utf-8")[:8000]
+        return doc_path.read_text(encoding="utf-8")[:_MAX_DOC_LENGTH]
 
-    # doc_type == "all": concatenate in order, truncate total to 8000 chars
+    # doc_type == "all": concatenate in order, truncate total to _MAX_DOC_LENGTH chars
     parts: list[str] = []
     order = ["llms_txt", "agents_md", "readme", "catalog"]
     for key in order:
@@ -289,7 +291,7 @@ def _read_library_documentation(library_name: str, doc_type: str) -> str:
             parts.append(f"# {path.name}\n\n{path.read_text(encoding='utf-8')}")
 
     combined = "\n\n".join(parts)
-    return combined[:8000]
+    return combined[:_MAX_DOC_LENGTH]
 
 
 def _create_write_plan_tool(workspace: "WorkspaceManager", session_slug: str | None = None) -> Any:
@@ -383,7 +385,7 @@ async def _run_vendor_skill_with_retry(
             return result
 
         # Failed — record this attempt
-        attempt_errors.append(f"Attempt {attempt}: {result[:300]}")
+        attempt_errors.append(f"Attempt {attempt}: {result[:_RETRY_ERROR_PREVIEW_LENGTH]}")
 
         workspace.append_audit_entry({
             "event": "skill_retry",
@@ -557,7 +559,7 @@ def _read_skill_documentation(
                     if extra.exists():
                         result += f"\n\n# {extra_name}\n\n{extra.read_text(encoding='utf-8')}"
 
-            return result[:8000]
+            return result[:_MAX_DOC_LENGTH]
 
     return f"Skill '{skill_name}' not found."
 
