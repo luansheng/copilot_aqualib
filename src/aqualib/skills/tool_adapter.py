@@ -502,6 +502,20 @@ async def _run_vendor_skill(
             f"{stderr.decode(errors='replace')[:500]}"
         )
 
+    # On success, copy output to session results directory for canonical storage
+    if session_slug:
+        import shutil
+        results_dir = workspace.session_results_dir(session_slug)
+        output_dest = results_dir / f"{meta.name}_output.json"
+        if legacy_output_file is not None and legacy_output_file.exists():
+            shutil.copy2(legacy_output_file, output_dest)
+        else:
+            stdout_text = stdout.decode(errors="replace")
+            output_dest.write_text(
+                json.dumps({"stdout": stdout_text[:4000]}, indent=2), encoding="utf-8"
+            )
+        logger.info("Skill output saved → %s", output_dest)
+
     if legacy_output_file is not None and legacy_output_file.exists():
         return legacy_output_file.read_text(encoding="utf-8")[:4000]
     return stdout.decode(errors="replace")[:4000]
