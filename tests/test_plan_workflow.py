@@ -129,19 +129,20 @@ class TestSystemPrompt:
 
 class TestAgentPrompts:
     def test_executor_prompt_reads_plan(self, settings: Settings, workspace: WorkspaceManager) -> None:
-        """Executor prompt should instruct reading plan.md."""
+        """Executor prompt should reference plan.md but NOT instruct re-reading it."""
         from aqualib.sdk.agents import build_custom_agents
 
         agents = build_custom_agents(settings, workspace)
         executor = next(a for a in agents if a["name"] == "executor")
         assert "plan.md" in executor["prompt"]
-        assert "Read the Plan" in executor["prompt"]
+        # Executor trusts conversation history — it should NOT redundantly re-read plan.md
+        assert "Do NOT re-read plan.md" in executor["prompt"]
 
     def test_reviewer_prompt_reads_plan(self, settings: Settings, workspace: WorkspaceManager) -> None:
-        """Reviewer prompt should instruct reading plan.md."""
+        """Reviewer prompt should instruct reading plan.md independently."""
         from aqualib.sdk.agents import build_custom_agents
 
         agents = build_custom_agents(settings, workspace)
         reviewer = next(a for a in agents if a["name"] == "reviewer")
         assert "plan.md" in reviewer["prompt"]
-        assert "Read the Plan" in reviewer["prompt"]
+        assert "Read the Plan First" in reviewer["prompt"]

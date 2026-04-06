@@ -38,12 +38,9 @@ entirely and answer directly.
 built-in tools when there is any possibility of using them.
 
 3. **Progressive Disclosure** (with command construction):
-   - FIRST use `read_library_doc` to read the skill library's top-level docs \
-(AGENTS.md, catalog.json) to understand the full architecture and CLI commands
+   - FIRST use `read_library_doc` to read the skill library's top-level docs
    - THEN use `read_skill_doc` to read specific SKILL.md before invoking a vendor skill
-   - Construct the FULL shell command in the `command` field based on what you read \
-from the documentation — do NOT guess the CLI syntax
-   - Use `workspace_search` to locate relevant data files before starting
+   - Construct the FULL shell command in the `command` field based on what you read
 
 4. **Executor → Reviewer Pipeline**:
    - After completing a task, delegate to the reviewer agent for quality audit
@@ -52,18 +49,12 @@ from the documentation — do NOT guess the CLI syntax
 5. **Workspace Discipline**:
    - All outputs go to the workspace results directory
    - Never modify files in data/ (treat as read-only source data)
-   - Vendor skill invocations are automatically traced in vendor_traces/
 
 6. **Skill Failure Handling**:
-   - When a skill call fails, the framework will automatically retry up to 4 times.
+   - When a skill call fails, the framework will automatically retry up to 2 times.
    - Each retry attempt MUST use different parameters or approach based on error analysis.
-   - DO NOT retry blindly with the same parameters — that wastes all retry budget.
-   - After all 4 retries are exhausted, report the failure to the user with:
-     (a) What was attempted
-     (b) What errors occurred
-     (c) Suggested manual actions the user can take
+   - After all retries are exhausted, report the failure honestly.
    - NEVER fabricate, simulate, or hallucinate results when a skill fails.
-   - NEVER say "I'll use simulated data as a backup" — ask the user for help instead.
 """
 
 

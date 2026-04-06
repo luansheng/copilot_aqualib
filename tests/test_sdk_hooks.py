@@ -55,15 +55,17 @@ async def test_build_hooks_doc_first_gate_unlocked_by_post_hook(workspace, setti
     pre_hook = hooks["on_pre_tool_use"]
     post_hook = hooks["on_post_tool_use"]
 
-    # Gate is closed initially
+    # Gate warns (but still allows) before docs are read
     result = await pre_hook({"toolName": "vendor_seq_align", "toolArgs": {}}, None)
-    assert result["permissionDecision"] == "block"
+    assert result["permissionDecision"] == "allow"
+    assert "DOC-FIRST" in result.get("additionalContext", "")
 
-    # After reading docs, gate opens
+    # After reading docs, gate allows without warning
     await post_hook({"toolName": "read_library_doc", "toolResult": "..."}, None)
 
     result = await pre_hook({"toolName": "vendor_seq_align", "toolArgs": {}}, None)
     assert result["permissionDecision"] == "allow"
+    assert "DOC-FIRST" not in result.get("additionalContext", "")
 
 
 # ---------------------------------------------------------------------------
@@ -206,8 +208,8 @@ class TestPreToolHook:
         assert "additionalContext" not in result
 
     @pytest.mark.asyncio
-    async def test_doc_first_gate_blocks_vendor_without_docs(self, workspace, settings):
-        """Vendor tool invocation before reading any docs should be blocked."""
+    async def test_doc_first_gate_warns_vendor_without_docs(self, workspace, settings):
+        """Vendor tool invocation before reading any docs should warn but still allow."""
         from aqualib.sdk.hooks import _make_pre_tool_hook
 
         hook = _make_pre_tool_hook(settings, workspace)
@@ -219,8 +221,8 @@ class TestPreToolHook:
             },
             None,
         )
-        assert result["permissionDecision"] == "block"
-        assert "DOC-FIRST GATE" in result.get("additionalContext", "")
+        assert result["permissionDecision"] == "allow"
+        assert "DOC-FIRST" in result.get("additionalContext", "")
 
     @pytest.mark.asyncio
     async def test_vendor_tool_allowed_after_docs_read(self, workspace, settings):
@@ -374,7 +376,7 @@ class TestErrorHook:
         from aqualib.sdk.hooks import _make_error_hook
 
         hook = _make_error_hook(workspace)
-        # New behavior: all errors retry up to _MAX_RETRIES (4) times, then skip
+        # All errors retry up to _MAX_RETRIES (2) times, then skip
         result = await hook(
             {"errorContext": "grep failed", "error": "permission denied"},
             None,
