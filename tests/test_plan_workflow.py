@@ -171,6 +171,14 @@ class TestAgentPrompts:
         # plan_revision_needed is a valid VERDICT value
         assert "plan_revision_needed" in reviewer["prompt"]
 
+    def test_reviewer_has_read_skill_doc_tool(self, settings: Settings, workspace: WorkspaceManager) -> None:
+        """Reviewer needs read_skill_doc to independently verify skill capabilities."""
+        from aqualib.sdk.agents import build_custom_agents
+
+        agents = build_custom_agents(settings, workspace)
+        reviewer = next(a for a in agents if a["name"] == "reviewer")
+        assert "read_skill_doc" in reviewer["tools"]
+
     def test_executor_prompt_handles_plan_revision(self, settings: Settings, workspace: WorkspaceManager) -> None:
         """Executor prompt must describe escalation when Reviewer requests plan revision."""
         from aqualib.sdk.agents import build_custom_agents
