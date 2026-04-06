@@ -21,9 +21,12 @@ _AQUALIB_GUIDELINES = """\
 
 1. **Plan-First Workflow** (MANDATORY):
    - For ANY task that involves tool execution or vendor skills, you MUST:
-     (a) Present a plan with: Goal, Data, Steps, Output
-     (b) Call `write_plan` to persist the plan
-     (c) WAIT for user confirmation before proceeding
+     (a) Use `workspace_search` to discover what data files actually exist in \
+the workspace and cross-reference against the user's request. If expected files \
+do not exist, ask the user for clarification BEFORE creating a plan.
+     (b) Present a plan with: Goal, Data (verified to exist), Steps, Output
+     (c) Call `write_plan` to persist the plan
+     (d) WAIT for user confirmation before proceeding
    - You are FORBIDDEN from delegating to executor or calling any vendor_* / \
 workspace tool without user confirmation of the plan.
    - Confirmation keywords: "go ahead", "execute", "ok", "yes", "确认", "执行", "好的"

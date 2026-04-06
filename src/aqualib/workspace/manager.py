@@ -80,19 +80,47 @@ class WorkspaceManager:
         Used by the SDK tool adapter to provide an isolated scratch space for
         each vendor skill call within the current session. Thread-safe via asyncio.Lock.
 
-        When *session_slug* is provided the directory is scoped per session
-        (``work/<session_slug>/inv_NNNN/``) so that concurrent sessions writing
-        to the same workspace do not collide.  When it is ``None`` the legacy
-        behaviour (``work/inv_NNNN/``) is preserved for backward compatibility.
+        When *session_slug* is provided the canonical directory is created under
+        ``sessions/<slug>/work/inv_NNNN/`` (authoritative storage), and a symlink
+        is placed at ``work/<slug>/inv_NNNN/`` for an aggregated cross-session
+        view.  The canonical path is returned so all tool writes go to the
+        session directory.
+
+        When *session_slug* is ``None`` the legacy behaviour
+        (``work/inv_NNNN/``) is preserved for backward compatibility.
         """
         async with self._invocation_lock:
             self._invocation_counter += 1
-            if session_slug:
-                inv_dir = self.dirs.work / session_slug / f"inv_{self._invocation_counter:04d}"
-            else:
-                inv_dir = self.dirs.work / f"inv_{self._invocation_counter:04d}"
-        inv_dir.mkdir(parents=True, exist_ok=True)
-        return inv_dir
+            counter = self._invocation_counter
+
+        if session_slug:
+            # Canonical location: session subdirectory
+            canonical_dir = (
+                self.dirs.base / "sessions" / session_slug / "work"
+                / f"inv_{counter:04d}"
+            )
+            canonical_dir.mkdir(parents=True, exist_ok=True)
+
+            # Aggregated view: symlink in work/<slug>/inv_NNNN → canonical
+            # Use a relative path so the symlink remains valid if the workspace is moved.
+            link_parent = self.dirs.work / session_slug
+            link_parent.mkdir(parents=True, exist_ok=True)
+            link_path = link_parent / f"inv_{counter:04d}"
+            try:
+                import os
+                rel_target = Path(os.path.relpath(canonical_dir, link_parent))
+                link_path.symlink_to(rel_target)
+            except (OSError, NotImplementedError):
+                # Symlinks not supported on this system; log and continue
+                logger.debug(
+                    "Symlink not supported; aggregated view at %s will be absent", link_path
+                )
+
+            return canonical_dir
+        else:
+            inv_dir = self.dirs.work / f"inv_{counter:04d}"
+            inv_dir.mkdir(parents=True, exist_ok=True)
+            return inv_dir
 
     # ------------------------------------------------------------------
     # Vendor trace logging
@@ -139,28 +167,57 @@ class WorkspaceManager:
         Used by the Copilot SDK integration layer (``sdk/tools.py``) where
         there is no ``SkillInvocation`` object – just a simple dict with the
         subprocess result.
+
+        When *session_slug* is provided the canonical file is written to
+        ``sessions/<slug>/vendor_traces/`` and a symlink (or fallback copy) is
+        placed in ``results/vendor_traces/`` for aggregated cross-session views.
+        The canonical path is returned.
+
+        When *session_slug* is ``None`` the file is written directly to
+        ``results/vendor_traces/`` (legacy fallback).
         """
-        trace_dir = self.dirs.vendor_traces
-        trace_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
         invocation_id = uuid.uuid4().hex[:8]
         filename = f"{skill_name}_{ts}_{invocation_id}.json"
-        trace_path = trace_dir / filename
         trace_data = {
             "skill_name": skill_name,
             "recorded_at": datetime.now(timezone.utc).isoformat(),
             **trace,
         }
-        trace_path.write_text(json.dumps(trace_data, indent=2))
-        logger.info("SDK vendor trace saved → %s", trace_path)
+        serialized = json.dumps(trace_data, indent=2)
 
-        # Additionally write to session-specific directory if slug provided
         if session_slug:
-            session_trace_dir = self.session_vendor_traces_dir(session_slug)
-            session_trace_path = session_trace_dir / filename
-            session_trace_path.write_text(json.dumps(trace_data, indent=2))
+            # Canonical location: session subdirectory
+            canonical_dir = self.session_vendor_traces_dir(session_slug)
+            canonical_path = canonical_dir / filename
+            canonical_path.write_text(serialized)
+            logger.info("SDK vendor trace saved → %s", canonical_path)
 
-        return trace_path
+            # Aggregated view: symlink in results/vendor_traces/ → canonical
+            # Use a relative path so the symlink remains valid if the workspace is moved.
+            global_dir = self.dirs.vendor_traces
+            global_dir.mkdir(parents=True, exist_ok=True)
+            link_path = global_dir / filename
+            try:
+                import os
+                rel_target = Path(os.path.relpath(canonical_path, global_dir))
+                link_path.symlink_to(rel_target)
+            except (OSError, NotImplementedError):
+                # Fall back to a copy on systems without symlink support
+                logger.debug(
+                    "Symlink not supported; writing copy at %s", link_path
+                )
+                link_path.write_text(serialized)
+
+            return canonical_path
+        else:
+            # Legacy path: write directly to results/vendor_traces/
+            trace_dir = self.dirs.vendor_traces
+            trace_dir.mkdir(parents=True, exist_ok=True)
+            trace_path = trace_dir / filename
+            trace_path.write_text(serialized)
+            logger.info("SDK vendor trace saved → %s", trace_path)
+            return trace_path
 
     # Backward-compatible alias
     save_clawbio_trace = save_vendor_trace
@@ -514,6 +571,7 @@ class WorkspaceManager:
         (session_dir / "memory").mkdir(exist_ok=True)
         (session_dir / "results").mkdir(exist_ok=True)
         (session_dir / "vendor_traces").mkdir(exist_ok=True)
+        (session_dir / "work").mkdir(exist_ok=True)
 
         now = datetime.now(timezone.utc).isoformat()
         meta: dict[str, Any] = {
@@ -583,6 +641,32 @@ class WorkspaceManager:
         d = self.session_dir(slug) / "vendor_traces"
         d.mkdir(parents=True, exist_ok=True)
         return d
+
+    def finalize_session_results(self, slug: str) -> None:
+        """Create symlinks in ``results/<slug>/`` pointing to ``sessions/<slug>/results/`` contents.
+
+        Called from the ``on_session_end`` hook after task completion so that
+        results are accessible under both the canonical session path and the
+        aggregated ``results/`` tree for cross-session views.
+
+        On systems that don't support symlinks the method logs a debug message
+        and skips creating the aggregated view.
+        """
+        session_results = self.session_results_dir(slug)
+        results_slug_dir = self.dirs.results / slug
+        results_slug_dir.mkdir(parents=True, exist_ok=True)
+        import os
+        for item in session_results.iterdir():
+            link = results_slug_dir / item.name
+            if not link.exists() and not link.is_symlink():
+                try:
+                    # Use a relative path so the symlink remains valid if the workspace is moved.
+                    rel_target = Path(os.path.relpath(item, results_slug_dir))
+                    link.symlink_to(rel_target)
+                except (OSError, NotImplementedError):
+                    logger.debug(
+                        "Symlink not supported; aggregated result at %s will be absent", link
+                    )
 
     # ------------------------------------------------------------------
     # Agent (role) memory

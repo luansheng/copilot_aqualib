@@ -16,6 +16,7 @@ on_error_occurred     | retry / skip strategy for vendor skill errors
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -24,6 +25,53 @@ if TYPE_CHECKING:
     from aqualib.workspace.manager import WorkspaceManager
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Memory helpers
+# ---------------------------------------------------------------------------
+
+
+def _save_reviewer_memory(
+    workspace: "WorkspaceManager",
+    session_slug: str,
+    result_text: str,
+) -> None:
+    """Extract reviewer verdict fields from *result_text* and persist to memory.
+
+    Parses VERDICT, VENDOR_PRIORITY, PLAN_QUALITY, and SUGGESTIONS using
+    regex so the reviewer's decisions accumulate in ``memory/reviewer.json``
+    rather than being lost at session end.
+    """
+    verdict_match = re.search(r"VERDICT\s*:\s*(\S+)", result_text, re.IGNORECASE)
+    vendor_match = re.search(r"VENDOR_PRIORITY\s*:\s*(.+?)(?:\n|$)", result_text, re.IGNORECASE)
+    quality_match = re.search(r"PLAN_QUALITY\s*:\s*(.+?)(?:\n|$)", result_text, re.IGNORECASE)
+    suggestions_match = re.search(r"SUGGESTIONS\s*:\s*(.+?)(?:\n\n|$)", result_text, re.IGNORECASE | re.DOTALL)
+
+    # Warn when the output doesn't match the expected reviewer format at all
+    if not verdict_match:
+        logger.warning("Reviewer memory: could not parse VERDICT from result text")
+    if not vendor_match:
+        logger.debug("Reviewer memory: could not parse VENDOR_PRIORITY from result text")
+    if not quality_match:
+        logger.debug("Reviewer memory: could not parse PLAN_QUALITY from result text")
+
+    entry: dict[str, Any] = {
+        "verdict": verdict_match.group(1).strip() if verdict_match else "unknown",
+        "vendor_priority": vendor_match.group(1).strip() if vendor_match else "unknown",
+        "plan_quality": quality_match.group(1).strip() if quality_match else "unknown",
+        "suggestions": suggestions_match.group(1).strip() if suggestions_match else "",
+        "violations": [],
+    }
+
+    # Collect violations: check that the field value *starts with* "violated"
+    # to avoid false positives from phrases like "not violated".
+    if re.match(r"violated", entry["vendor_priority"], re.IGNORECASE):
+        entry["violations"].append(f"vendor_priority: {entry['vendor_priority']}")
+    if re.match(r"violated", entry["plan_quality"], re.IGNORECASE):
+        entry["violations"].append(f"plan_quality: {entry['plan_quality']}")
+
+    workspace.append_agent_memory_entry(session_slug, "reviewer", entry)
 
 
 # ---------------------------------------------------------------------------
@@ -68,11 +116,14 @@ def _make_session_start_hook(workspace: "WorkspaceManager"):
             if project.get("summary"):
                 context_parts.append(f"History: {project['summary']}")
 
-        # Last 5 context log entries
+        # Last 5 context log entries (coordinator project history only)
         entries = workspace.load_context_log()
         task_entries = [e for e in entries if e.get("query")]  # skip hook-audit entries
         if task_entries:
-            context_parts.append("Recent tasks:")
+            context_parts.append(
+                "Recent tasks (coordinator project history — "
+                "sub-agents use their own role-specific memory):"
+            )
             for e in task_entries[-5:]:
                 icon = "✅" if e.get("status") in ("approved", "completed") else "⚠️"
                 context_parts.append(
@@ -217,8 +268,12 @@ def _make_post_tool_hook(
 
         Also tracks when read_skill_doc or read_library_doc are called so the
         doc-first gate in on_pre_tool_use can allow vendor tool invocations.
+
+        Automatically captures reviewer verdicts and executor vendor-skill
+        results into agent-role memory when a session_slug is available.
         """
         tool_name = input_data.get("toolName", "")
+        result_text = str(input_data.get("toolResult", ""))
 
         # Track documentation reads for the doc-first gate
         if tool_name in ("read_skill_doc", "read_library_doc"):
@@ -228,11 +283,35 @@ def _make_post_tool_hook(
             "event": "post_tool_use",
             "tool": tool_name,
             "success": not input_data.get("toolError"),
-            "result_preview": str(input_data.get("toolResult", ""))[:300],
+            "result_preview": result_text[:300],
         }
         if session_slug:
             entry["session_slug"] = session_slug
         workspace.append_audit_entry(entry)
+
+        # Auto-capture reviewer memory when the result contains a VERDICT
+        if session_slug and "VERDICT:" in result_text.upper():
+            try:
+                _save_reviewer_memory(workspace, session_slug, result_text)
+            except Exception:
+                logger.debug("Failed to save reviewer memory", exc_info=True)
+
+        # Auto-capture executor memory when a vendor_* tool completes
+        if session_slug and tool_name.startswith("vendor_"):
+            try:
+                workspace.append_agent_memory_entry(
+                    session_slug,
+                    "executor",
+                    {
+                        "event": "vendor_tool_use",
+                        "tool": tool_name,
+                        "success": not input_data.get("toolError"),
+                        "output_preview": result_text[:200],
+                    },
+                )
+            except Exception:
+                logger.debug("Failed to save executor memory", exc_info=True)
+
         return None
 
     return on_post_tool_use
@@ -242,6 +321,8 @@ def _make_session_end_hook(workspace: "WorkspaceManager", session_slug: str | No
     async def on_session_end(input_data: dict[str, Any], invocation: Any) -> None:
         """Flush and finalise the workspace state after the session ends."""
         workspace.finalize_task()
+        if session_slug:
+            workspace.finalize_session_results(session_slug)
         return None
 
     return on_session_end

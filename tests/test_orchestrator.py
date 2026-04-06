@@ -69,7 +69,7 @@ class TestSessionStartHook:
         result = await hook({}, None)
         assert result is not None
         ctx = result["additionalContext"]
-        assert "Recent tasks:" in ctx
+        assert "Recent tasks" in ctx
         assert "Align sequences" in ctx
         assert "Find inhibitors" in ctx
 
