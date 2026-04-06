@@ -596,7 +596,21 @@ def _maybe_create_rag_search_tool(settings: "Settings", workspace: "WorkspaceMan
 
         return rag_search
     except ImportError:
-        return None
+        # Fallback for environments without the SDK (e.g. test runs).
+        async def _stub_rag_fn(params, _s=settings, _w=workspace):
+            query = params.get("query", "")
+            top_k = params.get("top_k", 5)
+            return await _execute_rag_search(_s, _w, query, top_k)
+
+        return _make_stub_tool(
+            name="rag_search",
+            description=(
+                "Semantic search over workspace data files using vector embeddings. "
+                "More powerful than workspace_search for conceptual queries. "
+                "Use when keyword search returns poor results."
+            ),
+            fn=_stub_rag_fn,
+        )
 
 
 def _is_rag_available(settings: "Settings") -> bool:
