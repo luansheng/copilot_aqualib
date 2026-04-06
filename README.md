@@ -24,44 +24,62 @@ pip install -e ".[dev]"
 
 `--recursive` pulls vendor submodules (e.g. `vendor/ClawBio`). Only run these commands once — the `aqualib` CLI is then available globally in your Python environment.
 
-## Authentication & API Configuration
-
-### Mode A: GitHub Subscription (default)
+## Quick Start
 
 ```bash
-gh auth login
+# 1. Initialise a project workspace
+mkdir ~/my_gwas_study && cd ~/my_gwas_study
+aqualib init --name "罗非鱼GWAS" --description "Growth trait GWAS analysis"
+
+# 2. Edit aqualib.yaml to configure your API provider, model, etc.
+#    (see the Configuration section below — default uses GitHub Copilot)
+
+# 3. Add data
+cp ~/data/snp_data.vcf aqualib_workspace/data/
+
+# 4. Interactive chat (recommended)
+aqualib chat
+
+# 5. Or single-shot execution
+aqualib run "Analyze the SNP data for growth-related QTLs"
+
+# 6. Check project status
+aqualib status
 ```
 
-Keep `copilot.auth: "github"` in `aqualib.yaml` (the default). No API key needed.
+> **Key workflow:** Run `aqualib init` to create the project workspace, then **edit `aqualib.yaml` in the current directory** to configure your API provider, model, and other settings before running `aqualib chat` or `aqualib run`.
 
-### Mode B: GitHub Token
+## Configuration (aqualib.yaml)
 
-```bash
-export GH_TOKEN="ghp-your-token"
+`aqualib init` generates an `aqualib.yaml` file in the current working directory. Edit this file to configure AquaLib before starting a session.
+
+For a fully annotated reference, see [`aqualib.yaml.example`](./aqualib.yaml.example) in this repository.
+
+### Authentication mode (`copilot.auth`)
+
+| Value | Description |
+|-------|-------------|
+| `"github"` | **(default)** Use your GitHub Copilot subscription (run `gh auth login` once) |
+| `"token"` | GitHub Personal Access Token — set `github_token` or `GH_TOKEN` / `GITHUB_TOKEN` env var |
+| `"byok"` | Bring Your Own Key — any OpenAI-compatible API (OpenRouter, OpenAI, Ollama, Azure, …) |
+
+### Configuration examples
+
+**GitHub Copilot (default — no changes needed):**
+
+```yaml
+copilot:
+  auth: "github"
+  model: "gpt-4o"
 ```
 
-Or set in `aqualib.yaml`:
+**GitHub Token:**
 
 ```yaml
 copilot:
   auth: "token"
-  github_token: "ghp-your-token"
-```
-
-### Mode C: BYOK (Bring Your Own Key)
-
-Use any OpenAI-compatible API — OpenRouter, OpenAI direct, local Ollama, etc.
-
-**OpenRouter:**
-
-```yaml
-copilot:
-  auth: "byok"
-  model: "anthropic/claude-sonnet-4"
-  provider:
-    type: "openai"
-    base_url: "https://openrouter.ai/api/v1"
-    api_key: "sk-or-v1-xxx"
+  github_token: "ghp-your-token"   # or set GH_TOKEN env var
+  model: "gpt-4o"
 ```
 
 **OpenAI direct:**
@@ -73,7 +91,19 @@ copilot:
   provider:
     type: "openai"
     base_url: "https://api.openai.com/v1"
-    api_key: "sk-xxx"
+    api_key: "sk-xxx"              # or set AQUALIB_PROVIDER_API_KEY env var
+```
+
+**OpenRouter:**
+
+```yaml
+copilot:
+  auth: "byok"
+  model: "anthropic/claude-sonnet-4"
+  provider:
+    type: "openai"
+    base_url: "https://openrouter.ai/api/v1"
+    api_key: "sk-or-v1-xxx"
 ```
 
 **Local Ollama:**
@@ -88,31 +118,68 @@ copilot:
     api_key: "ollama"
 ```
 
-API key can also be set via environment variable:
+**Azure OpenAI:**
 
-```bash
-export AQUALIB_PROVIDER_API_KEY="sk-or-v1-xxx"
+```yaml
+copilot:
+  auth: "byok"
+  model: "gpt-4o"
+  provider:
+    type: "azure"
+    base_url: "https://<your-resource>.openai.azure.com/"
+    api_key: "your-azure-key"
+    azure:
+      api_version: "2024-10-21"
 ```
 
-## Quick Start
+### Other settings
 
-```bash
-# 1. Initialise a project
-mkdir ~/my_gwas_study && cd ~/my_gwas_study
-aqualib init --name "罗非鱼GWAS" --description "Growth trait GWAS analysis"
+```yaml
+copilot:
+  reasoning_effort: null   # null | "low" | "medium" | "high" | "xhigh" (extended thinking)
+  streaming: false         # true = stream output progressively to the terminal
 
-# 2. Add data
-cp ~/data/snp_data.vcf aqualib_workspace/data/
+rag:
+  enabled: false           # true = semantic search via LlamaIndex (requires aqualib[rag])
+  embed_model: "text-embedding-3-small"
+  api_key: ""              # AQUALIB_RAG_API_KEY → falls back to OPENAI_API_KEY
 
-# 3. Interactive chat (recommended)
-aqualib chat
+mcp:
+  enabled: false           # true = connect to MCP servers listed below
+  servers:
+    - name: "my-mcp-server"
+      transport: "stdio"
+      command: "python"
+      args: ["-m", "my_mcp_server"]
 
-# 4. Or single-shot execution
-aqualib run "Analyze the SNP data for growth-related QTLs"
+telemetry:
+  enabled: false           # true = OpenTelemetry distributed tracing
+  otlp_endpoint: ""        # e.g. "http://localhost:4317"
+  capture_content: false   # capture LLM prompt/response in trace spans
 
-# 5. Check project status
-aqualib status
+vendor_priority: true      # always prefer vendor skills over built-in tools
 ```
+
+### Environment variables
+
+| Variable | Purpose |
+|----------|---------|
+| `GH_TOKEN` / `GITHUB_TOKEN` | GitHub token for `auth: "token"` mode |
+| `AQUALIB_PROVIDER_API_KEY` | API key for BYOK provider |
+| `AQUALIB_PROVIDER_BASE_URL` | Base URL override for BYOK provider |
+| `OPENAI_API_KEY` | Legacy LLM / RAG fallback API key |
+| `AQUALIB_RAG_API_KEY` | Embedding API key for RAG pipeline |
+| `AQUALIB_RAG_BASE_URL` | Embedding base URL for RAG pipeline |
+| `COPILOT_CLI_PATH` | Path to a custom Copilot CLI binary |
+
+### Credential resolution order
+
+| Credential | 1st (highest) | 2nd | 3rd (lowest) |
+|---|---|---|---|
+| `copilot.github_token` | `aqualib.yaml` | `GH_TOKEN` / `GITHUB_TOKEN` | _(empty)_ |
+| `copilot.provider.api_key` | `aqualib.yaml` | `AQUALIB_PROVIDER_API_KEY` | _(empty)_ |
+| `rag.api_key` | `aqualib.yaml` | `AQUALIB_RAG_API_KEY` | falls back to `OPENAI_API_KEY` |
+| `rag.base_url` | `aqualib.yaml` | `AQUALIB_RAG_BASE_URL` | falls back to `llm.base_url` |
 
 ## Chat Mode
 
@@ -344,44 +411,6 @@ When the agent invokes a vendor skill:
 6. Return `output.json` content to the agent
 
 Vendor skills with errors are retried up to **2 times** before being skipped.
-
-## Configuration
-
-`aqualib.yaml` (generated by `aqualib init`):
-
-```yaml
-copilot:
-  auth: github               # "github" | "token" | "byok"
-  # github_token: ""         # defaults to GH_TOKEN / GITHUB_TOKEN
-  # provider:                # only for "byok"
-  #   type: openai           # "openai" | "azure" | "anthropic"
-  #   base_url: ""
-  #   api_key: ""            # or AQUALIB_PROVIDER_API_KEY env var
-  model: gpt-4o
-
-rag:
-  enabled: false
-  api_key: ""                # AQUALIB_RAG_API_KEY → falls back to llm.api_key
-  base_url: null             # AQUALIB_RAG_BASE_URL → falls back to llm.base_url
-  chunk_size: 512
-  chunk_overlap: 64
-  similarity_top_k: 5
-  embed_model: text-embedding-3-small
-
-vendor_priority: true
-
-directories:
-  base: ./aqualib_workspace
-```
-
-### Credential resolution order
-
-| Credential | 1st (highest) | 2nd | 3rd (lowest) |
-|---|---|---|---|
-| `copilot.github_token` | `aqualib.yaml` | `GH_TOKEN` / `GITHUB_TOKEN` | _(empty)_ |
-| `copilot.provider.api_key` | `aqualib.yaml` | `AQUALIB_PROVIDER_API_KEY` | _(empty)_ |
-| `rag.api_key` | `aqualib.yaml` | `AQUALIB_RAG_API_KEY` | falls back to `llm.api_key` |
-| `rag.base_url` | `aqualib.yaml` | `AQUALIB_RAG_BASE_URL` | falls back to `llm.base_url` |
 
 ## Development
 
