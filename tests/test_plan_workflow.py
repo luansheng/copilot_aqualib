@@ -136,7 +136,7 @@ class TestAgentPrompts:
         executor = next(a for a in agents if a["name"] == "executor")
         assert "plan.md" in executor["prompt"]
         # Executor trusts conversation history — it should NOT redundantly re-read plan.md
-        assert "Do NOT re-read plan.md" in executor["prompt"]
+        assert "do NOT re-read plan.md" in executor["prompt"]
 
     def test_reviewer_prompt_reads_plan(self, settings: Settings, workspace: WorkspaceManager) -> None:
         """Reviewer prompt should instruct reading plan.md independently."""

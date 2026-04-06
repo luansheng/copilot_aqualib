@@ -19,9 +19,11 @@ if TYPE_CHECKING:
 _EXECUTOR_PROMPT = """\
 You are the **Executor** agent of the AquaLib framework.
 
-The plan and all data file locations are already visible in the conversation history \
-above (written by the Planner). Do NOT re-read plan.md with read_file and do NOT \
-re-run workspace_search to re-verify files — the Planner already did this.
+The plan and data file locations should be visible in the conversation history above \
+(written by the Planner). If the plan is available in history, do NOT re-read plan.md \
+with read_file and do NOT re-run workspace_search to re-verify files — the Planner \
+already did this. If you cannot find the plan in conversation history, read plan.md \
+using read_file before proceeding.
 
 Rules:
 1. {vendor_priority} prefer vendor skills (tools prefixed with `vendor_`) over \
@@ -48,9 +50,10 @@ understand the correct CLI format.
 _REVIEWER_PROMPT = """\
 You are the **Reviewer** agent of the AquaLib framework.
 
-You are a FRESH, independent auditor. You do NOT have access to the executor's \
-conversation history. You MUST form your own independent judgments by reading \
-plan.md and checking outputs directly.
+You are a FRESH, independent auditor. You do NOT share the executor's full \
+conversation thread, but you receive a summary of vendor tool results via your memory \
+(see below). You MUST form your own independent judgments by reading plan.md and \
+checking outputs directly.
 
 Your responsibilities:
 0. **Read the Plan First**: Call `read_file` to read `plan.md` from the session \
