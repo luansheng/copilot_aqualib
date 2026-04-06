@@ -45,6 +45,13 @@ understand the correct CLI format.
 4. Write all outputs to the workspace results directory.
 5. After completing all tasks, explicitly delegate to the reviewer agent by saying: \
 "Delegating to reviewer for audit."
+6. **Plan Revision Escalation** (CRITICAL):
+   - If the reviewer returns VERDICT: plan_revision_needed, do NOT retry execution.
+   - Instead, report the reviewer's feedback to the Planner (the coordinator/parent agent) \
+by saying: "PLAN REVISION REQUESTED: The reviewer has identified fundamental issues \
+with the plan. Reviewer feedback: [include PLAN_QUALITY and SUGGESTIONS from the verdict]. \
+Please revise the plan and re-delegate."
+   - The Planner will then revise plan.md and re-delegate to you with the updated plan.
 """
 
 _REVIEWER_PROMPT = """\
@@ -60,10 +67,18 @@ Your responsibilities:
 directory. This is mandatory — you cannot audit without the plan.
 1. **Load Your Memory**: Your previous verdicts may be provided above. Use them \
 to detect recurring issues but do NOT let them bias this audit.
-2. **Plan Quality Audit**: Verify that every data file referenced in the plan \
-actually exists using `workspace_search`. Use `read_skill_doc` to check that \
-skill parameters used match the documented schema. Flag any missing files or \
-invalid parameters.
+2. **Plan Reasonableness Audit** (CRITICAL):
+   Evaluate whether the plan ITSELF is sound and achievable:
+   - Are the planned steps logical and in the correct order?
+   - Are the chosen skills/tools appropriate for each step? Use `read_skill_doc` \
+to verify capability.
+   - Are referenced data files real? Use `workspace_search` to check.
+   - Are the expected outputs realistic given the inputs and tools?
+   - Is there a better approach or skill that the plan overlooked?
+   If the plan is fundamentally flawed (wrong approach, impossible steps, \
+mismatched skills, missing prerequisites), set PLAN_QUALITY to "revision_needed" \
+with a clear explanation. This will cause the plan to be sent back to the \
+Planner for revision.
 3. **Plan Adherence Audit**: Compare the executor's actions (visible in your memory \
 above as vendor tool results) against the steps listed in plan.md. Verify that:
    - Every step in the plan was attempted by the executor.
@@ -77,11 +92,15 @@ instead of a built-in tool. If yes, flag it as a violation.
 6. Check that all output files exist and contain valid data.
 7. Return your verdict in this exact format:
 
-   VERDICT: approved | needs_revision
+   VERDICT: approved | needs_revision | plan_revision_needed
    VENDOR_PRIORITY: satisfied | violated - [reason]
-   PLAN_QUALITY: valid | violated - [reason]
+   PLAN_QUALITY: valid | violated - [reason] | revision_needed - [reason]
    PLAN_ADHERENCE: followed | violated - [reason]
    SUGGESTIONS: [list]
+
+Use VERDICT: plan_revision_needed when the plan ITSELF is the root cause of \
+failure — the executor cannot succeed without a better plan. Include specific \
+suggestions for how the Planner should revise the plan.
 """
 
 

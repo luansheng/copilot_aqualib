@@ -42,9 +42,15 @@ built-in tools when there is any possibility of using them.
    - THEN use `read_skill_doc` to read specific SKILL.md before invoking a vendor skill
    - Construct the FULL shell command in the `command` field based on what you read
 
-4. **Executor → Reviewer Pipeline**:
+4. **Executor → Reviewer → Plan Revision Pipeline**:
    - After completing a task, delegate to the reviewer agent for quality audit
    - If the reviewer says "needs_revision", address the feedback and re-run
+   - If the reviewer says "plan_revision_needed", the plan itself is flawed:
+     (a) Read the reviewer's PLAN_QUALITY reason and SUGGESTIONS
+     (b) Revise the plan to address the reviewer's concerns
+     (c) Call `write_plan` to persist the revised plan
+     (d) Present the revised plan to the user for re-confirmation
+     (e) After confirmation, re-delegate to the executor with the new plan
 
 5. **Workspace Discipline**:
    - All outputs go to the workspace results directory

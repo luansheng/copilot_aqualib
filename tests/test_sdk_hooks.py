@@ -473,3 +473,48 @@ class TestSaveReviewerMemory:
         # Should not add a violation for an unknown adherence field
         assert not any("plan_adherence" in v for v in entry["violations"])
 
+    def test_plan_quality_revision_needed(self, tmp_path):
+        """When PLAN_QUALITY is revision_needed, it should be stored and treated as a violation."""
+        from aqualib.sdk.hooks import _save_reviewer_memory
+
+        ws = self._make_workspace(tmp_path)
+        meta = ws.create_session(name="s4")
+        slug = meta["slug"]
+
+        result_text = (
+            "VERDICT: plan_revision_needed\n"
+            "VENDOR_PRIORITY: satisfied\n"
+            "PLAN_QUALITY: revision_needed - wrong skill chosen for alignment\n"
+            "PLAN_ADHERENCE: followed\n"
+            "SUGGESTIONS: use vendor_seq_align instead of grep\n"
+        )
+        _save_reviewer_memory(ws, slug, result_text)
+
+        mem = ws.load_agent_memory(slug, "reviewer")
+        entry = mem["entries"][0]
+        assert entry["verdict"] == "plan_revision_needed"
+        assert entry["plan_quality"].startswith("revision_needed")
+        assert any("plan_quality" in v for v in entry["violations"])
+
+    def test_plan_quality_violated_still_works(self, tmp_path):
+        """Existing 'violated' value for PLAN_QUALITY remains a violation."""
+        from aqualib.sdk.hooks import _save_reviewer_memory
+
+        ws = self._make_workspace(tmp_path)
+        meta = ws.create_session(name="s5")
+        slug = meta["slug"]
+
+        result_text = (
+            "VERDICT: needs_revision\n"
+            "VENDOR_PRIORITY: satisfied\n"
+            "PLAN_QUALITY: violated - missing data file\n"
+            "PLAN_ADHERENCE: followed\n"
+            "SUGGESTIONS: fix data path\n"
+        )
+        _save_reviewer_memory(ws, slug, result_text)
+
+        mem = ws.load_agent_memory(slug, "reviewer")
+        entry = mem["entries"][0]
+        assert entry["plan_quality"].startswith("violated")
+        assert any("plan_quality" in v for v in entry["violations"])
+

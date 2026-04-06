@@ -41,6 +41,12 @@ def _save_reviewer_memory(
     Parses VERDICT, VENDOR_PRIORITY, PLAN_QUALITY, PLAN_ADHERENCE, and SUGGESTIONS
     using regex so the reviewer's decisions accumulate in ``memory/reviewer.json``
     rather than being lost at session end.
+
+    PLAN_QUALITY supports three states:
+    - ``valid`` — plan is sound
+    - ``violated`` — minor issues (missing files, bad params)
+    - ``revision_needed`` — the plan is fundamentally flawed and must be revised
+      by the Planner before re-execution
     """
     verdict_match = re.search(r"VERDICT\s*:\s*(\S+)", result_text, re.IGNORECASE)
     vendor_match = re.search(r"VENDOR_PRIORITY\s*:\s*(.+?)(?:\n|$)", result_text, re.IGNORECASE)
@@ -67,11 +73,12 @@ def _save_reviewer_memory(
         "violations": [],
     }
 
-    # Collect violations: check that the field value *starts with* "violated"
-    # to avoid false positives from phrases like "not violated".
+    # Collect violations: "violated" = minor issue; "revision_needed" = plan must be revised
     if re.match(r"violated", entry["vendor_priority"], re.IGNORECASE):
         entry["violations"].append(f"vendor_priority: {entry['vendor_priority']}")
     if re.match(r"violated", entry["plan_quality"], re.IGNORECASE):
+        entry["violations"].append(f"plan_quality: {entry['plan_quality']}")
+    if re.match(r"revision_needed", entry["plan_quality"], re.IGNORECASE):
         entry["violations"].append(f"plan_quality: {entry['plan_quality']}")
     if re.match(r"violated", entry["plan_adherence"], re.IGNORECASE):
         entry["violations"].append(f"plan_adherence: {entry['plan_adherence']}")

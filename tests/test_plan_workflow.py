@@ -157,3 +157,38 @@ class TestAgentPrompts:
         assert "Plan Adherence Audit" in reviewer["prompt"]
         # PLAN_ADHERENCE appears in the verdict format the reviewer must emit
         assert "PLAN_ADHERENCE" in reviewer["prompt"]
+
+    def test_reviewer_prompt_audits_plan_reasonableness(self, settings: Settings, workspace: WorkspaceManager) -> None:
+        """Reviewer prompt must evaluate the plan's soundness and can request revision."""
+        from aqualib.sdk.agents import build_custom_agents
+
+        agents = build_custom_agents(settings, workspace)
+        reviewer = next(a for a in agents if a["name"] == "reviewer")
+        # Explicit plan reasonableness audit
+        assert "Plan Reasonableness Audit" in reviewer["prompt"]
+        # revision_needed is a valid PLAN_QUALITY value
+        assert "revision_needed" in reviewer["prompt"]
+        # plan_revision_needed is a valid VERDICT value
+        assert "plan_revision_needed" in reviewer["prompt"]
+
+    def test_executor_prompt_handles_plan_revision(self, settings: Settings, workspace: WorkspaceManager) -> None:
+        """Executor prompt must describe escalation when Reviewer requests plan revision."""
+        from aqualib.sdk.agents import build_custom_agents
+
+        agents = build_custom_agents(settings, workspace)
+        executor = next(a for a in agents if a["name"] == "executor")
+        assert "Plan Revision Escalation" in executor["prompt"]
+        assert "plan_revision_needed" in executor["prompt"]
+        # Executor should NOT retry execution on plan revision
+        assert "do NOT retry execution" in executor["prompt"]
+
+    def test_planner_guidelines_include_plan_revision_loop(
+        self, settings: Settings, workspace: WorkspaceManager,
+    ) -> None:
+        """Planner system prompt should describe the plan revision feedback loop."""
+        from aqualib.sdk.system_prompt import build_system_message
+
+        msg = build_system_message(settings, workspace)
+        guidelines = msg["sections"]["guidelines"]["content"]
+        assert "plan_revision_needed" in guidelines
+        assert "Revise the plan" in guidelines
