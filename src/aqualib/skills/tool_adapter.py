@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 _VENDOR_TIMEOUT_SECONDS = 43200  # 12 hours
 
 _MAX_DOC_LENGTH = 8000  # Maximum characters returned by doc-reading tools
+_MAX_DOC_FILE_CHARS = 2000  # Per-file character cap when doc_type="all"
 
 # Module-level cache for RAGIndexer instances, keyed by index path.
 # Avoids rebuilding/deserializing the vector index on every rag_search call.
@@ -313,7 +314,8 @@ def _read_library_documentation(library_name: str, doc_type: str) -> str:
     parts: list[str] = []
     for f in sorted(lib_dir.iterdir()):
         if f.is_file() and f.suffix in (".md", ".txt"):
-            parts.append(f"# {f.name}\n\n{f.read_text(encoding='utf-8')}")
+            content = f.read_text(encoding="utf-8")[:_MAX_DOC_FILE_CHARS]  # per-file cap
+            parts.append(f"# {f.name}\n\n{content}")
     # Also include skills/catalog.json if present
     catalog = lib_dir / "skills" / "catalog.json"
     if catalog.exists():
