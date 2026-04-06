@@ -29,7 +29,7 @@ pip install -e ".[dev]"
 ```bash
 # 1. Initialise a project workspace
 mkdir ~/my_gwas_study && cd ~/my_gwas_study
-aqualib init --name "罗非鱼GWAS" --description "Growth trait GWAS analysis"
+aqualib init --name "南美白对虾GWAS" --description "Growth trait GWAS analysis"
 
 # 2. Edit aqualib.yaml to configure your API provider, model, etc.
 #    (see the Configuration section below — default uses GitHub Copilot)
