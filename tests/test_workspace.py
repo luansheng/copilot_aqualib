@@ -251,3 +251,76 @@ class TestScanDataFiles:
         (data_dir / "high.txt").write_text("protein alignment sequence data")
         results = workspace.scan_data_files("protein alignment sequence")
         assert results[0]["path"] == "high.txt"  # more keyword matches
+
+
+# ---------------------------------------------------------------------------
+# Integer timestamp tests
+# ---------------------------------------------------------------------------
+
+
+def test_build_project_summary_integer_timestamp(workspace: WorkspaceManager):
+    """build_project_summary must not crash when context_log has integer timestamps."""
+    # Simulate what the SDK produces: Unix epoch milliseconds as int
+    workspace.append_context_log({
+        "task_id": "t1", "status": "approved", "skills_used": [],
+        "timestamp": 1743638400000,  # int epoch ms — triggers the bug
+    })
+    # Should not raise TypeError
+    summary = workspace.build_project_summary()
+    assert "1 tasks completed" in summary
+    assert "Last run:" in summary
+
+
+def test_build_project_summary_mixed_timestamps(workspace: WorkspaceManager):
+    """build_project_summary handles a mix of string and integer timestamps."""
+    workspace.append_context_log({
+        "task_id": "t1", "status": "approved", "skills_used": ["seq_align"],
+        "timestamp": "2026-03-01T00:00:00",
+    })
+    workspace.append_context_log({
+        "task_id": "t2", "status": "approved", "skills_used": [],
+        "timestamp": 1743638400000,  # int epoch ms
+    })
+    summary = workspace.build_project_summary()
+    assert "2 tasks completed" in summary
+    assert "Last run:" in summary
+
+
+def test_append_audit_entry_normalizes_int_timestamp(workspace: WorkspaceManager):
+    """append_audit_entry converts non-string timestamps to strings."""
+    workspace.append_audit_entry({
+        "event": "user_prompt", "query": "hello", "timestamp": 1743638400000,
+    })
+    entries = workspace.load_context_log()
+    assert len(entries) == 1
+    assert isinstance(entries[0]["timestamp"], str)
+
+
+def test_append_audit_entry_fills_missing_timestamp(workspace: WorkspaceManager):
+    """append_audit_entry inserts a UTC ISO string when timestamp is absent."""
+    workspace.append_audit_entry({"event": "user_prompt", "query": "hi"})
+    entries = workspace.load_context_log()
+    assert len(entries) == 1
+    ts = entries[0]["timestamp"]
+    assert isinstance(ts, str)
+    assert "T" in ts  # basic ISO 8601 sanity check
+
+
+def test_append_audit_entry_preserves_string_timestamp(workspace: WorkspaceManager):
+    """append_audit_entry leaves an existing string timestamp unchanged."""
+    iso_ts = "2026-04-01T12:00:00+00:00"
+    workspace.append_audit_entry({"event": "user_prompt", "query": "q", "timestamp": iso_ts})
+    entries = workspace.load_context_log()
+    assert entries[0]["timestamp"] == iso_ts
+
+
+def test_append_audit_entry_normalizes_datetime_timestamp(workspace: WorkspaceManager):
+    """append_audit_entry converts a datetime object to an ISO 8601 string."""
+    from datetime import datetime, timezone
+
+    dt = datetime(2026, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
+    workspace.append_audit_entry({"event": "user_prompt", "query": "q", "timestamp": dt})
+    entries = workspace.load_context_log()
+    ts = entries[0]["timestamp"]
+    assert isinstance(ts, str)
+    assert ts == dt.isoformat()

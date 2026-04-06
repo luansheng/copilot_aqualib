@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -175,10 +176,24 @@ def _make_session_start_hook(workspace: "WorkspaceManager"):
 def _make_prompt_hook(workspace: "WorkspaceManager", session_slug: str | None = None):
     async def on_user_prompt_submitted(input_data: dict[str, Any], invocation: Any) -> None:
         """Record the user prompt to context_log for project memory."""
+        raw_ts = input_data.get("timestamp")
+        if raw_ts is None:
+            timestamp = datetime.now(timezone.utc).isoformat()
+        elif isinstance(raw_ts, str):
+            timestamp = raw_ts
+        elif isinstance(raw_ts, (int, float)):
+            # SDK may pass Unix epoch in milliseconds or seconds.
+            # Threshold: any value > 1e10 is treated as milliseconds (covers all
+            # ms timestamps after April 1970); values <= 1e10 are seconds (covers
+            # all second timestamps up to year 2286).
+            epoch_s = raw_ts / 1000 if raw_ts > 1e10 else raw_ts
+            timestamp = datetime.fromtimestamp(epoch_s, tz=timezone.utc).isoformat()
+        else:
+            timestamp = str(raw_ts)
         entry: dict[str, Any] = {
             "event": "user_prompt",
             "query": input_data.get("prompt", ""),
-            "timestamp": input_data.get("timestamp"),
+            "timestamp": timestamp,
         }
         if session_slug:
             entry["session_slug"] = session_slug

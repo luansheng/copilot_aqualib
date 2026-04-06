@@ -316,7 +316,13 @@ class WorkspaceManager:
         Used by the SDK hooks (``on_pre_tool_use``, ``on_post_tool_use``, etc.)
         to maintain a real-time audit trail.
         """
-        entry.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
+        ts = entry.get("timestamp")
+        if ts is None:
+            entry["timestamp"] = datetime.now(timezone.utc).isoformat()
+        elif isinstance(ts, datetime):
+            entry["timestamp"] = ts.isoformat()
+        elif not isinstance(ts, str):
+            entry["timestamp"] = str(ts)
         self.append_context_log(entry)
 
     def build_project_summary(self) -> str:
@@ -338,7 +344,7 @@ class WorkspaceManager:
 
         status_parts = [f"{count} {status}" for status, count in status_counts.most_common()]
         skill_parts = [f"{name} ({count}×)" for name, count in skill_counts.most_common()]
-        last_date = last_timestamp[:10] if last_timestamp else "unknown"
+        last_date = str(last_timestamp)[:10] if last_timestamp else "unknown"
 
         return (
             f"{total} tasks completed ({', '.join(status_parts)}). "
