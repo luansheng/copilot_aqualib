@@ -216,7 +216,7 @@ aqualib chat --new-session --session-name "gwas-round-2"
 
 ```text
 🐙 AquaLib Chat
-📂 Project: 罗非鱼GWAS
+📂 Project: 南美白对虾GWAS
 🔗 Session: gwas-round-1-a1b2c3d4 (0 tasks)
 
 Type your message, or use /help for commands.
